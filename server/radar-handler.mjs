@@ -85,6 +85,15 @@ function sendJson(response, status, payload) {
   response.end(JSON.stringify(payload));
 }
 
+function buildJsonResponse(status, payload) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+    },
+  });
+}
+
 function createHttpError(statusCode, message) {
   const error = new Error(message);
   error.statusCode = statusCode;
@@ -543,9 +552,17 @@ function createServerSupabaseClient(supabaseUrl, supabaseAnonKey, accessToken) {
   });
 }
 
-function getHeaderValue(request, headerName) {
+function getHeaderValue(headers, headerName) {
+  if (!headers) {
+    return "";
+  }
+
+  if (typeof headers.get === "function") {
+    return headers.get(headerName) ?? "";
+  }
+
   const normalizedName = headerName.toLowerCase();
-  const value = request.headers?.[normalizedName];
+  const value = headers[normalizedName] ?? headers[headerName];
 
   if (Array.isArray(value)) {
     return value[0] ?? "";
@@ -554,8 +571,8 @@ function getHeaderValue(request, headerName) {
   return typeof value === "string" ? value : "";
 }
 
-function getBearerToken(request) {
-  const authorizationHeader = getHeaderValue(request, "authorization");
+function getBearerToken(headers) {
+  const authorizationHeader = getHeaderValue(headers, "authorization");
 
   if (!authorizationHeader.toLowerCase().startsWith("bearer ")) {
     return "";
@@ -564,12 +581,12 @@ function getBearerToken(request) {
   return authorizationHeader.slice(7).trim();
 }
 
-async function authenticateRadarUser(request, supabaseUrl, supabaseAnonKey) {
+async function authenticateRadarUser(headers, supabaseUrl, supabaseAnonKey) {
   if (!supabaseUrl || !supabaseAnonKey) {
     throw createHttpError(500, "Supabase serveur manquant pour securiser Radar.");
   }
 
-  const accessToken = getBearerToken(request);
+  const accessToken = getBearerToken(headers);
 
   if (!accessToken) {
     throw createHttpError(401, "Session invalide. Reconnecte-toi.");
@@ -625,175 +642,195 @@ async function releaseServerRadarUsage(client, usageId) {
   await client.from("radar_usage").delete().eq("id", usageId);
 }
 
-export function createRadarRequestHandler({ apiKey, supabaseUrl, supabaseAnonKey }) {
-  return async function handleRadarRequest(request, response) {
-    const pathname = typeof request.url === "string" ? request.url.split("?")[0] : "";
+function getPathnameFromUrl(requestUrl) {
+  if (!requestUrl) {
+    return "";
+  }
 
-    if (request.method !== "POST" || pathname !== "/api/radar") {
-      return false;
-    }
+  if (requestUrl.startsWith("http://") || requestUrl.startsWith("https://")) {
+    return new URL(requestUrl).pathname;
+  }
 
-    if (!apiKey) {
-      sendJson(response, 500, {
+  return requestUrl.split("?")[0] ?? "";
+}
+
+async function processRadarHttpRequest({
+  apiKey,
+  supabaseUrl,
+  supabaseAnonKey,
+  requestMethod,
+  requestUrl,
+  headers,
+  readBody,
+}) {
+  const pathname = getPathnameFromUrl(requestUrl);
+
+  if (requestMethod !== "POST" || pathname !== "/api/radar") {
+    return null;
+  }
+
+  if (!apiKey) {
+    return {
+      status: 500,
+      payload: {
         error: "Ajoute ANTHROPIC_API_KEY dans ton .env pour activer Radar.",
-      });
-      return true;
-    }
+      },
+    };
+  }
 
-    let reservation = null;
-    let authContext = null;
+  let reservation = null;
+  let authContext = null;
+
+  try {
+    authContext = await authenticateRadarUser(headers, supabaseUrl, supabaseAnonKey);
+
+    const rawBody = await readBody();
+    let parsedBody = {};
 
     try {
-      authContext = await authenticateRadarUser(request, supabaseUrl, supabaseAnonKey);
+      parsedBody = JSON.parse(rawBody || "{}");
+    } catch {
+      return { status: 400, payload: { error: "JSON invalide." } };
+    }
 
-      const rawBody = await readRequestBody(request);
-      let parsedBody = {};
+    const sport = typeof parsedBody?.sport === "string" ? parsedBody.sport.trim() : "";
+    const risk = typeof parsedBody?.risk === "string" ? parsedBody.risk.trim() : "";
+    const startDate = isIsoDateInput(parsedBody?.startDate) ? String(parsedBody.startDate).trim() : "";
+    const endDate = isIsoDateInput(parsedBody?.endDate) ? String(parsedBody.endDate).trim() : "";
+    const historySummary = typeof parsedBody?.historySummary === "string" ? parsedBody.historySummary.trim().slice(0, 500) : "";
+    const todayIso = getDoualaIsoDate();
+
+    if (!sport || !risk || !startDate || !endDate) {
+      return { status: 400, payload: { error: "Sport, risque ou dates manquants." } };
+    }
+
+    if (!allowedRadarSports.has(sport)) {
+      return { status: 400, payload: { error: "Sport non pris en charge." } };
+    }
+
+    if (!allowedRadarRisks.has(risk)) {
+      return { status: 400, payload: { error: "Niveau de risque invalide." } };
+    }
+
+    const requestedDayCount = countDaysInWindow(startDate, endDate);
+
+    if (!Number.isFinite(requestedDayCount) || requestedDayCount < 1) {
+      return { status: 400, payload: { error: "Fenetre de dates invalide." } };
+    }
+
+    if (requestedDayCount > MAX_RADAR_WINDOW_DAYS) {
+      return {
+        status: 400,
+        payload: { error: `Fenetre trop large. Maximum ${MAX_RADAR_WINDOW_DAYS} jours.` },
+      };
+    }
+
+    if (endDate < todayIso) {
+      return {
+        status: 400,
+        payload: {
+          error: `La fenetre demandee est deja passee. Choisis une date a partir du ${todayIso}.`,
+        },
+      };
+    }
+
+    const effectiveStartDate = startDate < todayIso ? todayIso : startDate;
+    const effectiveEndDate = endDate < effectiveStartDate ? effectiveStartDate : endDate;
+
+    reservation = await claimServerRadarUsage(authContext.client, todayIso);
+
+    if (!reservation.allowed) {
+      return { status: 429, payload: { error: "Quota du jour atteint.", usage: reservation } };
+    }
+
+    const currentDateContext = `Date de reference aujourd'hui: ${todayIso}.`;
+    const historyContext = historySummary
+      ? `Contexte historique utilisateur: ${historySummary}.`
+      : "Contexte historique utilisateur: aucun historique exploitable pour le moment.";
+    const marketGuide = getMarketGuideForSport(sport);
+    const attempts = buildRadarAttempts(effectiveStartDate, effectiveEndDate);
+    let lastNoUsableSuggestions = false;
+
+    for (const attempt of attempts) {
+      const dateContext =
+        attempt.startDate === attempt.endDate
+          ? `Fenetre souhaitee: ${attempt.startDate}.`
+          : `Fenetre souhaitee: du ${attempt.startDate} au ${attempt.endDate}.`;
+      const fallbackContext = attempt.shifted
+        ? `Fenetre de repli automatique autorisee: du ${attempt.startDate} au ${attempt.endDate}. Garde cette fenetre proche et signale clairement ce decalage.`
+        : "Reste prioritairement dans la fenetre demandee.";
+
+      const anthropicPayload = await requestAnthropicRadar(apiKey, {
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 620,
+        temperature: 0.2,
+        system: anthropicSystemPrompt,
+        tools: anthropicRadarTools,
+        messages: [
+          {
+            role: "user",
+            content: [
+              `Sport: ${sport}.`,
+              `Risque: ${risk}.`,
+              currentDateContext,
+              dateContext,
+              fallbackContext,
+              historyContext,
+              marketGuide,
+              "Tu peux retourner de 0 a 3 combines realistes avec 2 a 3 selections maximum par combine.",
+              "Ne cite jamais un match deja joue, une finale historique ou un tournoi termine.",
+              `Aucune selection ne doit avoir un event_date en dehors de la fenetre ${attempt.startDate} -> ${attempt.endDate} ni avant ${todayIso}.`,
+              "Si tu n'es pas sur qu'un evenement est a venir dans la fenetre demandee, tu l'exclus au lieu de deviner.",
+              "Si aucun evenement plausible n'existe dans la fenetre demandee, tu peux te decaler vers la prochaine fenetre utile, au maximum 3 jours apres la fin demandee.",
+              "N'ecris jamais d'heure exacte.",
+              "Pour un evenement qui tombe aujourd'hui, verifie aussi qu'il est encore a venir; s'il y a un doute sur l'horaire ou le statut, exclue-le.",
+              "Chaque leg doit contenir competition, event, event_date, market et pick. competition = tournoi ou championnat. event = les deux equipes ou joueurs seulement. event_date = YYYY-MM-DD verifie.",
+              "Si la date d'un evenement n'est pas clairement verifiee, exclue cet evenement.",
+              "Diversifie les marches sur les suggestions quand c'est plausible.",
+              "Evite de reutiliser les memes affiches sauf si c'est vraiment incontournable.",
+              "N'abuse pas des simples vainqueurs et n'abuse pas des overs/unders.",
+              "Si tu ne peux pas produire une suggestion plausible sans halluciner, retourne suggestions: [].",
+              "Pour chaque combine, retourne un label court, les selections, la cote estimee, une logique concise et un point de vigilance concis.",
+              "La reponse doit etre un seul objet JSON brut, sans balise markdown et sans phrase d'introduction ou de conclusion.",
+              "Si la fenetre est decalee, tu dois le signaler clairement dans note et used_window.",
+              "Format JSON strict: {used_window:{start_date,end_date}, shifted:boolean, note:string, suggestions:[{label, legs:[{competition,event,event_date,market,pick}], odds, rationale, caution}]}",
+            ].join(" "),
+          },
+        ],
+      });
 
       try {
-        parsedBody = JSON.parse(rawBody || "{}");
-      } catch {
-        sendJson(response, 400, { error: "JSON invalide." });
-        return true;
-      }
+        const parsedRadarPayload = extractRadarJsonPayload(anthropicPayload);
+        const result = normalizeRadarResult(
+          parsedRadarPayload,
+          attempt.startDate,
+          attempt.endDate,
+          todayIso,
+          attempt.shifted
+            ? {
+                startDate: attempt.startDate,
+                endDate: attempt.endDate,
+                note: attempt.note,
+              }
+            : undefined,
+          reservation,
+        );
 
-      const sport = typeof parsedBody?.sport === "string" ? parsedBody.sport.trim() : "";
-      const risk = typeof parsedBody?.risk === "string" ? parsedBody.risk.trim() : "";
-      const startDate = isIsoDateInput(parsedBody?.startDate) ? String(parsedBody.startDate).trim() : "";
-      const endDate = isIsoDateInput(parsedBody?.endDate) ? String(parsedBody.endDate).trim() : "";
-      const historySummary = typeof parsedBody?.historySummary === "string" ? parsedBody.historySummary.trim().slice(0, 500) : "";
-      const todayIso = getDoualaIsoDate();
-
-      if (!sport || !risk || !startDate || !endDate) {
-        sendJson(response, 400, { error: "Sport, risque ou dates manquants." });
-        return true;
-      }
-
-      if (!allowedRadarSports.has(sport)) {
-        sendJson(response, 400, { error: "Sport non pris en charge." });
-        return true;
-      }
-
-      if (!allowedRadarRisks.has(risk)) {
-        sendJson(response, 400, { error: "Niveau de risque invalide." });
-        return true;
-      }
-
-      const requestedDayCount = countDaysInWindow(startDate, endDate);
-
-      if (!Number.isFinite(requestedDayCount) || requestedDayCount < 1) {
-        sendJson(response, 400, { error: "Fenetre de dates invalide." });
-        return true;
-      }
-
-      if (requestedDayCount > MAX_RADAR_WINDOW_DAYS) {
-        sendJson(response, 400, { error: `Fenetre trop large. Maximum ${MAX_RADAR_WINDOW_DAYS} jours.` });
-        return true;
-      }
-
-      if (endDate < todayIso) {
-        sendJson(response, 400, {
-          error: `La fenetre demandee est deja passee. Choisis une date a partir du ${todayIso}.`,
-        });
-        return true;
-      }
-
-      const effectiveStartDate = startDate < todayIso ? todayIso : startDate;
-      const effectiveEndDate = endDate < effectiveStartDate ? effectiveStartDate : endDate;
-
-      reservation = await claimServerRadarUsage(authContext.client, todayIso);
-
-      if (!reservation.allowed) {
-        sendJson(response, 429, { error: "Quota du jour atteint.", usage: reservation });
-        return true;
-      }
-
-      const currentDateContext = `Date de reference aujourd'hui: ${todayIso}.`;
-      const historyContext = historySummary
-        ? `Contexte historique utilisateur: ${historySummary}.`
-        : "Contexte historique utilisateur: aucun historique exploitable pour le moment.";
-      const marketGuide = getMarketGuideForSport(sport);
-      const attempts = buildRadarAttempts(effectiveStartDate, effectiveEndDate);
-      let lastNoUsableSuggestions = false;
-
-      for (const attempt of attempts) {
-        const dateContext =
-          attempt.startDate === attempt.endDate
-            ? `Fenetre souhaitee: ${attempt.startDate}.`
-            : `Fenetre souhaitee: du ${attempt.startDate} au ${attempt.endDate}.`;
-        const fallbackContext = attempt.shifted
-          ? `Fenetre de repli automatique autorisee: du ${attempt.startDate} au ${attempt.endDate}. Garde cette fenetre proche et signale clairement ce decalage.`
-          : "Reste prioritairement dans la fenetre demandee.";
-
-        const anthropicPayload = await requestAnthropicRadar(apiKey, {
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 620,
-          temperature: 0.2,
-          system: anthropicSystemPrompt,
-          tools: anthropicRadarTools,
-          messages: [
-            {
-              role: "user",
-              content: [
-                `Sport: ${sport}.`,
-                `Risque: ${risk}.`,
-                currentDateContext,
-                dateContext,
-                fallbackContext,
-                historyContext,
-                marketGuide,
-                "Tu peux retourner de 0 a 3 combines realistes avec 2 a 3 selections maximum par combine.",
-                "Ne cite jamais un match deja joue, une finale historique ou un tournoi termine.",
-                `Aucune selection ne doit avoir un event_date en dehors de la fenetre ${attempt.startDate} -> ${attempt.endDate} ni avant ${todayIso}.`,
-                "Si tu n'es pas sur qu'un evenement est a venir dans la fenetre demandee, tu l'exclus au lieu de deviner.",
-                "Si aucun evenement plausible n'existe dans la fenetre demandee, tu peux te decaler vers la prochaine fenetre utile, au maximum 3 jours apres la fin demandee.",
-                "N'ecris jamais d'heure exacte.",
-                "Pour un evenement qui tombe aujourd'hui, verifie aussi qu'il est encore a venir; s'il y a un doute sur l'horaire ou le statut, exclue-le.",
-                "Chaque leg doit contenir competition, event, event_date, market et pick. competition = tournoi ou championnat. event = les deux equipes ou joueurs seulement. event_date = YYYY-MM-DD verifie.",
-                "Si la date d'un evenement n'est pas clairement verifiee, exclue cet evenement.",
-                "Diversifie les marches sur les suggestions quand c'est plausible.",
-                "Evite de reutiliser les memes affiches sauf si c'est vraiment incontournable.",
-                "N'abuse pas des simples vainqueurs et n'abuse pas des overs/unders.",
-                "Si tu ne peux pas produire une suggestion plausible sans halluciner, retourne suggestions: [].",
-                "Pour chaque combine, retourne un label court, les selections, la cote estimee, une logique concise et un point de vigilance concis.",
-                "La reponse doit etre un seul objet JSON brut, sans balise markdown et sans phrase d'introduction ou de conclusion.",
-                "Si la fenetre est decalee, tu dois le signaler clairement dans note et used_window.",
-                "Format JSON strict: {used_window:{start_date,end_date}, shifted:boolean, note:string, suggestions:[{label, legs:[{competition,event,event_date,market,pick}], odds, rationale, caution}]}",
-              ].join(" "),
-            },
-          ],
-        });
-
-        try {
-          const parsedRadarPayload = extractRadarJsonPayload(anthropicPayload);
-          const result = normalizeRadarResult(
-            parsedRadarPayload,
-            attempt.startDate,
-            attempt.endDate,
-            todayIso,
-            attempt.shifted
-              ? {
-                  startDate: attempt.startDate,
-                  endDate: attempt.endDate,
-                  note: attempt.note,
-                }
-              : undefined,
-            reservation,
-          );
-
-          sendJson(response, 200, result);
-          return true;
-        } catch (error) {
-          if (isNoUsableSuggestionsError(error)) {
-            lastNoUsableSuggestions = true;
-            continue;
-          }
-
-          throw error;
+        return { status: 200, payload: result };
+      } catch (error) {
+        if (isNoUsableSuggestionsError(error)) {
+          lastNoUsableSuggestions = true;
+          continue;
         }
-      }
 
-      if (lastNoUsableSuggestions) {
-        sendJson(response, 200, {
+        throw error;
+      }
+    }
+
+    if (lastNoUsableSuggestions) {
+      return {
+        status: 200,
+        payload: {
           suggestions: [],
           window: {
             startDate: effectiveStartDate,
@@ -802,24 +839,58 @@ export function createRadarRequestHandler({ apiKey, supabaseUrl, supabaseAnonKey
             note: "Aucun evenement plausible sur la periode demandee ni sur la courte fenetre suivante.",
           },
           usage: reservation,
-        });
-        return true;
-      }
-
-      sendJson(response, 500, { error: "Analyse indisponible pour le moment." });
-      return true;
-    } catch (error) {
-      if (reservation?.usageId && authContext?.client) {
-        try {
-          await releaseServerRadarUsage(authContext.client, reservation.usageId);
-        } catch {
-          // Ignore quota rollback errors and prefer surfacing the Radar failure itself.
-        }
-      }
-
-      const message = error instanceof Error ? error.message : "Erreur interne sur Radar.";
-      sendJson(response, getErrorStatusCode(error), { error: message });
-      return true;
+        },
+      };
     }
+
+    return { status: 500, payload: { error: "Analyse indisponible pour le moment." } };
+  } catch (error) {
+    if (reservation?.usageId && authContext?.client) {
+      try {
+        await releaseServerRadarUsage(authContext.client, reservation.usageId);
+      } catch {
+        // Ignore quota rollback errors and prefer surfacing the Radar failure itself.
+      }
+    }
+
+    const message = error instanceof Error ? error.message : "Erreur interne sur Radar.";
+    return { status: getErrorStatusCode(error), payload: { error: message } };
+  }
+}
+
+export function createRadarRequestHandler({ apiKey, supabaseUrl, supabaseAnonKey }) {
+  return async function handleRadarRequest(request, response) {
+    const result = await processRadarHttpRequest({
+      apiKey,
+      supabaseUrl,
+      supabaseAnonKey,
+      requestMethod: request.method,
+      requestUrl: request.url,
+      headers: request.headers,
+      readBody: () => readRequestBody(request),
+    });
+
+    if (!result) {
+      return false;
+    }
+
+    sendJson(response, result.status, result.payload);
+    return true;
   };
+}
+
+export async function handlePagesRadarRequest(context, options) {
+  const result = await processRadarHttpRequest({
+    ...options,
+    requestMethod: context.request.method,
+    requestUrl: context.request.url,
+    headers: context.request.headers,
+    readBody: () => context.request.text(),
+  });
+
+  if (!result) {
+    return typeof context.next === "function" ? context.next() : buildJsonResponse(404, { error: "Not found." });
+  }
+
+  return buildJsonResponse(result.status, result.payload);
 }
