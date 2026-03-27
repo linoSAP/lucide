@@ -211,25 +211,25 @@ export function DashboardPage() {
           <div className="mt-4 h-56 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData} margin={{ top: 12, right: 4, left: 0, bottom: 0 }}>
-                <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
+                <CartesianGrid vertical={false} stroke="rgb(var(--chart-grid) / 0.08)" />
                 <XAxis
                   dataKey="label"
                   axisLine={false}
                   tickLine={false}
-                  tick={{ fill: "#666666", fontSize: 11 }}
+                  tick={{ fill: "rgb(var(--muted-foreground) / 0.92)", fontSize: 11 }}
                   minTickGap={20}
                 />
                 <YAxis hide domain={["auto", "auto"]} />
                 <Tooltip
-                  cursor={{ stroke: "rgba(255,255,255,0.08)", strokeWidth: 1 }}
+                  cursor={{ stroke: "rgb(var(--chart-grid) / 0.12)", strokeWidth: 1 }}
                   contentStyle={{
-                    background: "rgba(30, 30, 30, 0.96)",
-                    border: "1px solid rgba(255,255,255,0.05)",
+                    background: "rgb(var(--card) / 0.96)",
+                    border: "1px solid rgb(var(--border) / 0.08)",
                     borderRadius: "16px",
-                    color: "#F5F5F5",
-                    boxShadow: "0 18px 40px rgba(0, 0, 0, 0.18)",
+                    color: "rgb(var(--foreground) / 1)",
+                    boxShadow: "0 18px 40px rgb(var(--surface-shadow) / 0.14)",
                   }}
-                  labelStyle={{ color: "#888888", fontSize: 12 }}
+                  labelStyle={{ color: "rgb(var(--muted-foreground) / 1)", fontSize: 12 }}
                   formatter={(value) => [formatAmount(Number(value)), "Bilan"]}
                 />
                 <Line

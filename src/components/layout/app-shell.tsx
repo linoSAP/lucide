@@ -47,7 +47,7 @@ export function AppShell() {
             <p className="mt-2 max-w-xs text-sm leading-6 text-muted-foreground">{meta.subtitle}</p>
           </div>
 
-          <div className="rounded-full border border-white/5 bg-card/80 px-3 py-2 text-right text-xs text-muted-foreground shadow-soft">
+          <div className="rounded-full border border-border/8 bg-card/84 px-3 py-2 text-right text-xs text-muted-foreground shadow-soft">
             <p className="max-w-[7rem] truncate">{session?.user.email ?? "Session"}</p>
           </div>
         </motion.header>

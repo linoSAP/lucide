@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Check, Copy, HeartHandshake, LogOut, MessageCircle, PencilLine } from "lucide-react";
+import { Check, Copy, HeartHandshake, LogOut, MessageCircle, Moon, PencilLine, SunMedium } from "lucide-react";
 import { PageShell } from "@/components/layout/page-shell";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatDateTime } from "@/lib/format";
+import { getStoredThemePreference, setThemePreference, type ThemePreference } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/use-auth-store";
 
@@ -17,6 +18,25 @@ const supportAmounts = [
   { label: "2000 FCFA", value: "2000" },
   { label: "Libre", value: "libre" },
 ] as const;
+const themeOptions: Array<{
+  value: ThemePreference;
+  label: string;
+  description: string;
+  icon: typeof SunMedium;
+}> = [
+  {
+    value: "light",
+    label: "Clair",
+    description: "Plus net, plus lumineux.",
+    icon: SunMedium,
+  },
+  {
+    value: "dark",
+    label: "Sombre",
+    description: "Plus discret, plus dense.",
+    icon: Moon,
+  },
+];
 
 function getInitials(value: string) {
   const cleaned = value.trim();
@@ -97,6 +117,7 @@ export function ProfilePage() {
   const [username, setUsername] = useState(profile?.username ?? "");
   const [selectedAmount, setSelectedAmount] = useState<(typeof supportAmounts)[number]["value"]>("500");
   const [customAmount, setCustomAmount] = useState("");
+  const [themePreference, setThemePreferenceState] = useState<ThemePreference>(() => getStoredThemePreference());
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -154,6 +175,11 @@ export function ProfilePage() {
     }
   }
 
+  function handleThemePreferenceChange(nextTheme: ThemePreference) {
+    setThemePreferenceState(nextTheme);
+    setThemePreference(nextTheme);
+  }
+
   return (
     <PageShell className="space-y-3">
       <form className="surface hairline rounded-[24px] px-4 py-4 shadow-soft" onSubmit={handleSave}>
@@ -186,7 +212,7 @@ export function ProfilePage() {
           <Input
             value={session?.user.email ?? ""}
             readOnly
-            className="bg-white/3 text-muted-foreground"
+            className="bg-secondary/72 text-muted-foreground"
           />
         </div>
 
@@ -200,6 +226,51 @@ export function ProfilePage() {
           </Button>
         </div>
       </form>
+
+      <div className="surface hairline rounded-[24px] px-4 py-4 shadow-soft">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-lg font-semibold text-foreground">Apparence</p>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">Choisis le thème le plus confortable.</p>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {themeOptions.map((option) => {
+            const Icon = option.icon;
+            const isActive = option.value === themePreference;
+
+            return (
+              <button
+                key={option.value}
+                type="button"
+                className={cn(
+                  "rounded-[22px] border px-4 py-4 text-left transition",
+                  isActive
+                    ? "border-primary/24 bg-primary/10 ring-1 ring-primary/18"
+                    : "border-border/8 bg-card/70 hover:bg-card/86",
+                )}
+                onClick={() => handleThemePreferenceChange(option.value)}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div
+                    className={cn(
+                      "flex h-11 w-11 items-center justify-center rounded-2xl",
+                      isActive ? "bg-primary/16 text-primary" : "bg-secondary/92 text-muted-foreground",
+                    )}
+                  >
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  {isActive ? <span className="text-xs font-medium text-primary">Actif</span> : null}
+                </div>
+
+                <p className="mt-4 text-sm font-semibold text-foreground">{option.label}</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">{option.description}</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       <div className="rounded-[26px] border border-white/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,176,32,0.08))] px-4 py-4 shadow-soft">
         <div className="flex items-start justify-between gap-4">

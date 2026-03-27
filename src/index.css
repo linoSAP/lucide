@@ -2,7 +2,37 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: 248 244 236;
+  --foreground: 28 30 36;
+  --card: 255 252 247;
+  --secondary: 239 234 225;
+  --muted: 244 240 232;
+  --muted-foreground: 102 109 120;
+  --border: 24 30 41;
+  --input: 255 255 255;
+  --ring: 0 230 118;
+  --positive: 0 230 118;
+  --warning: 255 176 32;
+  --negative: 255 82 82;
+  --radius: 16px;
+  --surface-shadow: 24 30 41;
+  --surface-outline-alpha: 0.08;
+  --surface-background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.8), rgb(250 246 239 / 0.94)),
+    radial-gradient(circle at top left, rgb(0 230 118 / 0.08), transparent 0 42%),
+    radial-gradient(circle at bottom right, rgb(255 176 32 / 0.07), transparent 0 40%);
+  --body-background:
+    radial-gradient(circle at top, rgb(0 230 118 / 0.1), transparent 0 28%),
+    radial-gradient(circle at 84% 10%, rgb(255 176 32 / 0.08), transparent 0 22%),
+    radial-gradient(circle at 12% 100%, rgb(87 181 255 / 0.08), transparent 0 24%),
+    linear-gradient(180deg, rgb(255 255 255 / 0.75) 0%, rgb(248 244 236 / 0.98) 100%);
+  --chart-grid: 24 30 41;
+}
+
+:root[data-theme="dark"] {
   color-scheme: dark;
   --background: 13 13 13;
   --foreground: 245 245 245;
@@ -17,6 +47,19 @@
   --warning: 255 176 32;
   --negative: 255 82 82;
   --radius: 16px;
+  --surface-shadow: 0 0 0;
+  --surface-outline-alpha: 0.06;
+  --surface-background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.025), transparent 24%),
+    radial-gradient(circle at top left, rgb(0 230 118 / 0.04), transparent 0 42%),
+    radial-gradient(circle at bottom right, rgb(255 176 32 / 0.035), transparent 0 38%),
+    linear-gradient(180deg, rgb(30 30 30 / 0.94), rgb(22 22 22 / 0.92));
+  --body-background:
+    radial-gradient(circle at top, rgb(0 230 118 / 0.12), transparent 0 30%),
+    radial-gradient(circle at 82% 8%, rgb(255 176 32 / 0.08), transparent 0 24%),
+    radial-gradient(circle at 15% 100%, rgb(87 181 255 / 0.05), transparent 0 22%),
+    linear-gradient(180deg, rgb(255 255 255 / 0.03) 0%, transparent 24%);
+  --chart-grid: 255 255 255;
 }
 
 @layer base {
@@ -30,11 +73,11 @@
 
   body {
     @apply min-h-screen bg-background font-sans text-foreground antialiased;
-    background-image:
-      radial-gradient(circle at top, rgb(0 230 118 / 0.12), transparent 0 30%),
-      radial-gradient(circle at 82% 8%, rgb(255 176 32 / 0.08), transparent 0 24%),
-      radial-gradient(circle at 15% 100%, rgb(87 181 255 / 0.05), transparent 0 22%),
-      linear-gradient(180deg, rgb(255 255 255 / 0.03) 0%, transparent 24%);
+    background-image: var(--body-background);
+    transition:
+      background-color 220ms ease,
+      color 220ms ease,
+      border-color 220ms ease;
   }
 
   #root {
@@ -51,11 +94,7 @@
 
 @layer utilities {
   .surface {
-    background:
-      linear-gradient(180deg, rgb(255 255 255 / 0.025), transparent 24%),
-      radial-gradient(circle at top left, rgb(0 230 118 / 0.04), transparent 0 42%),
-      radial-gradient(circle at bottom right, rgb(255 176 32 / 0.035), transparent 0 38%),
-      linear-gradient(180deg, rgb(30 30 30 / 0.94), rgb(22 22 22 / 0.92));
+    background: var(--surface-background);
     backdrop-filter: blur(20px);
   }
 
@@ -64,6 +103,80 @@
   }
 
   .hairline {
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.04);
+    box-shadow: inset 0 0 0 1px rgb(var(--border) / var(--surface-outline-alpha));
   }
+
+  .shadow-soft {
+    box-shadow: 0 18px 40px rgb(var(--surface-shadow) / 0.14);
+  }
+}
+
+:root[data-theme="light"] .bg-white\/4 {
+  background-color: rgb(255 255 255 / 0.76);
+}
+
+:root[data-theme="light"] .bg-white\/3 {
+  background-color: rgb(255 255 255 / 0.68);
+}
+
+:root[data-theme="light"] .bg-white\/5,
+:root[data-theme="light"] .hover\:bg-white\/5:hover {
+  background-color: rgb(24 30 41 / 0.05);
+}
+
+:root[data-theme="light"] .bg-white\/6 {
+  background-color: rgb(24 30 41 / 0.06);
+}
+
+:root[data-theme="light"] .bg-white\/8,
+:root[data-theme="light"] .hover\:bg-white\/8:hover {
+  background-color: rgb(24 30 41 / 0.08);
+}
+
+:root[data-theme="light"] .bg-white\/10 {
+  background-color: rgb(24 30 41 / 0.1);
+}
+
+:root[data-theme="light"] .bg-white\/12 {
+  background-color: rgb(24 30 41 / 0.12);
+}
+
+:root[data-theme="light"] .bg-black\/10 {
+  background-color: rgb(24 30 41 / 0.06);
+}
+
+:root[data-theme="light"] .border-white\/5 {
+  border-color: rgb(24 30 41 / 0.08);
+}
+
+:root[data-theme="light"] .border-white\/6 {
+  border-color: rgb(24 30 41 / 0.09);
+}
+
+:root[data-theme="light"] .border-white\/8 {
+  border-color: rgb(24 30 41 / 0.1);
+}
+
+:root[data-theme="light"] .border-white\/12 {
+  border-color: rgb(24 30 41 / 0.12);
+}
+
+:root[data-theme="light"] .bg-background\/56 {
+  background-color: rgb(248 244 236 / 0.72);
+}
+
+:root[data-theme="light"] .text-muted-foreground\/80 {
+  color: rgb(var(--muted-foreground) / 0.9);
+}
+
+:root[data-theme="light"] .text-muted-foreground\/90 {
+  color: rgb(var(--muted-foreground) / 0.95);
+}
+
+:root[data-theme="light"] .text-foreground\/88 {
+  color: rgb(var(--foreground) / 0.88);
+}
+
+:root[data-theme="light"] .ring-white\/12 {
+  --tw-ring-color: rgb(24 30 41 / 0.12);
 }

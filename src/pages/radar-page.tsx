@@ -281,6 +281,7 @@ export function RadarPage() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [selectedSuggestion, setSelectedSuggestion] = useState<RadarSuggestion | null>(null);
   const [bookmakerOdds, setBookmakerOdds] = useState("");
+  const [stakeAmount, setStakeAmount] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSavingSuggestion, setIsSavingSuggestion] = useState(false);
 
@@ -297,12 +298,15 @@ export function RadarPage() {
   const analysisRiskMeta = useMemo(() => getRiskMeta(analysisRisk), [analysisRisk]);
   const historySummary = useMemo(() => buildRadarHistorySummary(bets), [bets]);
   const parsedBookmakerOdds = parseDecimal(bookmakerOdds);
+  const parsedStakeAmount = parseDecimal(stakeAmount);
   const isRadarLimitReached = Boolean(usageStatus && usageStatus.remainingCount <= 0);
   const canSaveSuggestion =
     Boolean(session?.user) &&
     Boolean(selectedSuggestion) &&
     Number.isFinite(parsedBookmakerOdds) &&
-    parsedBookmakerOdds > 0;
+    parsedBookmakerOdds > 0 &&
+    Number.isFinite(parsedStakeAmount) &&
+    parsedStakeAmount > 0;
 
   useEffect(() => {
     let isCancelled = false;
@@ -350,6 +354,7 @@ export function RadarPage() {
       if (event.key === "Escape" && !isSavingSuggestion) {
         setSelectedSuggestion(null);
         setBookmakerOdds("");
+        setStakeAmount("");
         setSaveError(null);
       }
     }
@@ -366,6 +371,7 @@ export function RadarPage() {
   function openSaveSheet(suggestion: RadarSuggestion) {
     setSelectedSuggestion(suggestion);
     setBookmakerOdds(suggestion.odds);
+    setStakeAmount("");
     setSaveError(null);
     setSaveMessage(null);
   }
@@ -377,6 +383,7 @@ export function RadarPage() {
 
     setSelectedSuggestion(null);
     setBookmakerOdds("");
+    setStakeAmount("");
     setSaveError(null);
   }
 
@@ -448,7 +455,7 @@ export function RadarPage() {
         eventCount: isCombo ? selectedSuggestion.legs.length : 1,
         minOdds: null,
         maxOdds: null,
-        stake: 0,
+        stake: parsedStakeAmount,
         odds: parsedBookmakerOdds,
         status: "pending",
       });
@@ -456,7 +463,8 @@ export function RadarPage() {
       await refreshBets();
       setSelectedSuggestion(null);
       setBookmakerOdds("");
-      setSaveMessage("Ajoute au Journal. Complete la mise quand tu veux.");
+      setStakeAmount("");
+      setSaveMessage("Ajoute au Journal.");
     } catch (nextError) {
       setSaveError(getErrorMessage(nextError, "Impossible d'enregistrer ce combine pour le moment."));
     } finally {
@@ -663,7 +671,7 @@ export function RadarPage() {
                 <div className="mt-4 flex items-start justify-between gap-3">
                   <div>
                     <p className="text-base font-semibold text-foreground">Ajouter au Journal</p>
-                    <p className="mt-1 text-sm text-muted-foreground">Entre la cote.</p>
+                    <p className="mt-1 text-sm text-muted-foreground">Entre la cote et la mise.</p>
                   </div>
 
                   <button
@@ -710,6 +718,16 @@ export function RadarPage() {
                     placeholder="Cote bookmaker"
                     value={bookmakerOdds}
                     onChange={(event) => setBookmakerOdds(event.target.value)}
+                  />
+
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    placeholder="Mise"
+                    value={stakeAmount}
+                    onChange={(event) => setStakeAmount(event.target.value)}
                   />
 
                   {saveError ? <p className="px-1 text-sm text-negative/90">{saveError}</p> : null}

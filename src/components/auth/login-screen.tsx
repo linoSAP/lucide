@@ -90,19 +90,21 @@ export function LoginScreen() {
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/12 text-primary">
               <Sparkles className="h-5 w-5" />
             </div>
-            <img
-              src={logo}
-              alt="Lucide logo"
-              className="h-24 w-auto opacity-80"
-            />
+            <div className="inline-flex rounded-[20px] bg-[#101010] px-4 py-3 shadow-soft">
+              <img
+                src={logo}
+                alt="Lucide logo"
+                className="h-24 w-auto opacity-90"
+              />
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 gap-2 rounded-[18px] bg-white/4 p-1">
+            <div className="grid grid-cols-2 gap-2 rounded-[18px] bg-secondary/88 p-1">
               <button
                 type="button"
                 className={cn(
                   "rounded-[14px] px-4 py-2 text-sm font-medium transition",
-                  mode === "sign-in" ? "bg-white/8 text-foreground" : "text-muted-foreground hover:text-foreground",
+                  mode === "sign-in" ? "bg-card/92 text-foreground" : "text-muted-foreground hover:text-foreground",
                 )}
                 onClick={() => switchMode("sign-in")}
               >
@@ -112,7 +114,7 @@ export function LoginScreen() {
                 type="button"
                 className={cn(
                   "rounded-[14px] px-4 py-2 text-sm font-medium transition",
-                  mode === "sign-up" ? "bg-white/8 text-foreground" : "text-muted-foreground hover:text-foreground",
+                  mode === "sign-up" ? "bg-card/92 text-foreground" : "text-muted-foreground hover:text-foreground",
                 )}
                 onClick={() => switchMode("sign-up")}
               >
