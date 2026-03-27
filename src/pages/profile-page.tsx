@@ -413,7 +413,7 @@ export function ProfilePage() {
 
         <button
           type="button"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground transition hover:text-foreground"
+          className=" mb-8 inline-flex items-center gap-2 text-sm text-muted-foreground transition hover:text-foreground"
           onClick={handleSignOut}
           disabled={isSigningOut}
         >
