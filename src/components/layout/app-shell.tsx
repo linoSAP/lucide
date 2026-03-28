@@ -18,7 +18,7 @@ const pageMeta: Record<string, { title: string; subtitle: string }> = {
   },
   "/profil": {
     title: "Profil",
-    subtitle: "Parametres, donation et informations personnelles.",
+    subtitle: "Parametres, soutien et informations personnelles.",
   },
 };
 

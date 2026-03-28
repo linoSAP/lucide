@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
+import { createRadarAdminRequestHandler } from "./server/radar-admin-handler.mjs";
 import { createRadarRequestHandler } from "./server/radar-handler.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -30,6 +31,12 @@ const handleRadarRequest = createRadarRequestHandler({
   apiKey: process.env.ANTHROPIC_API_KEY ?? "",
   supabaseUrl: process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? "",
   supabaseAnonKey: process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY ?? "",
+});
+const handleRadarAdminRequest = createRadarAdminRequestHandler({
+  supabaseUrl: process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? "",
+  supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+  adminPassword: process.env.RADAR_ADMIN_PASSWORD ?? "",
+  adminSessionSecret: process.env.RADAR_ADMIN_SESSION_SECRET ?? "",
 });
 
 function loadLocalEnv(filePath) {
@@ -97,6 +104,12 @@ function resolvePublicFile(requestPath) {
 
 const server = http.createServer(async (request, response) => {
   try {
+    const handledAdmin = await handleRadarAdminRequest(request, response);
+
+    if (handledAdmin) {
+      return;
+    }
+
     const handled = await handleRadarRequest(request, response);
 
     if (handled) {

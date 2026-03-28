@@ -1,8 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 
-const RADAR_DAILY_LIMIT = 2;
+const RADAR_WEEKLY_LIMIT = 2;
 const MAX_RADAR_BODY_BYTES = 16 * 1024;
 const MAX_RADAR_WINDOW_DAYS = 7;
+const MAX_ANTHROPIC_CONTINUATIONS = 3;
+const MAX_ANTHROPIC_RATE_LIMIT_RETRIES = 1;
+const MAX_ANTHROPIC_RATE_LIMIT_RETRY_MS = 3000;
+const DEFAULT_ANTHROPIC_RATE_LIMIT_RETRY_MS = 1200;
 const allowedRadarSports = new Set(["Football", "Basketball", "Tennis"]);
 const allowedRadarRisks = new Set(["prudent", "balanced", "aggressive"]);
 
@@ -106,6 +110,60 @@ function getErrorStatusCode(error) {
 
 function getDoualaIsoDate(date = new Date()) {
   return doualaDateFormatter.format(date);
+}
+
+function getDoualaDateParts(date = new Date()) {
+  const parts = doualaDateFormatter.formatToParts(date);
+
+  return {
+    year: Number(parts.find((part) => part.type === "year")?.value ?? "0"),
+    month: Number(parts.find((part) => part.type === "month")?.value ?? "0"),
+    day: Number(parts.find((part) => part.type === "day")?.value ?? "0"),
+  };
+}
+
+function formatUtcDateToIso(date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getDoualaWeekStartIsoDate(date = new Date()) {
+  const { year, month, day } = getDoualaDateParts(date);
+  const weekDate = new Date(Date.UTC(year, month - 1, day));
+  const weekday = weekDate.getUTCDay();
+  const daysSinceMonday = (weekday + 6) % 7;
+
+  weekDate.setUTCDate(weekDate.getUTCDate() - daysSinceMonday);
+  return formatUtcDateToIso(weekDate);
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
+
+function parseRetryAfterSeconds(value) {
+  if (!value) {
+    return null;
+  }
+
+  const trimmedValue = String(value).trim();
+  const parsedSeconds = Number.parseInt(trimmedValue, 10);
+
+  if (Number.isFinite(parsedSeconds) && parsedSeconds >= 0) {
+    return parsedSeconds;
+  }
+
+  const parsedDate = Date.parse(trimmedValue);
+
+  if (!Number.isFinite(parsedDate)) {
+    return null;
+  }
+
+  return Math.max(0, Math.ceil((parsedDate - Date.now()) / 1000));
 }
 
 function toIsoDateString(date) {
@@ -365,6 +423,55 @@ function normalizeRadarLeg(entry, allowedStartDate, allowedEndDate, todayIso) {
   };
 }
 
+function readRadarWindowFromPayload(payload) {
+  const startDate =
+    readDateField(payload?.used_window?.start_date) ||
+    readDateField(payload?.used_window?.startDate) ||
+    readDateField(payload?.window?.start_date) ||
+    readDateField(payload?.window?.startDate);
+  const endDate =
+    readDateField(payload?.used_window?.end_date) ||
+    readDateField(payload?.used_window?.endDate) ||
+    readDateField(payload?.window?.end_date) ||
+    readDateField(payload?.window?.endDate);
+
+  if (!startDate || !endDate || endDate < startDate) {
+    return null;
+  }
+
+  return { startDate, endDate };
+}
+
+function buildExplicitNoSuggestionsResult(parsed, requestedStartDate, requestedEndDate, fallbackWindow, usage) {
+  if (Array.isArray(parsed) || !Array.isArray(parsed?.suggestions) || parsed.suggestions.length > 0) {
+    return null;
+  }
+
+  const payloadWindow = readRadarWindowFromPayload(parsed);
+  const startDate = payloadWindow?.startDate ?? fallbackWindow?.startDate ?? requestedStartDate;
+  const endDate = payloadWindow?.endDate ?? fallbackWindow?.endDate ?? requestedEndDate;
+  const note =
+    normalizeFreeText(parsed?.note) ||
+    fallbackWindow?.note ||
+    "Aucun evenement plausible sur la periode demandee.";
+  const shifted =
+    (typeof parsed?.shifted === "boolean" ? parsed.shifted : false) ||
+    Boolean(fallbackWindow) ||
+    startDate !== requestedStartDate ||
+    endDate !== requestedEndDate;
+
+  return {
+    suggestions: [],
+    window: {
+      startDate,
+      endDate,
+      shifted,
+      note,
+    },
+    usage,
+  };
+}
+
 function normalizeRadarResult(parsed, requestedStartDate, requestedEndDate, todayIso, fallbackWindow, usage) {
   const items = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.suggestions) ? parsed.suggestions : [];
   const seenSuggestionSignatures = new Set();
@@ -423,6 +530,18 @@ function normalizeRadarResult(parsed, requestedStartDate, requestedEndDate, toda
     .slice(0, 3);
 
   if (!suggestions.length) {
+    const explicitNoSuggestionsResult = buildExplicitNoSuggestionsResult(
+      parsed,
+      requestedStartDate,
+      requestedEndDate,
+      fallbackWindow,
+      usage,
+    );
+
+    if (explicitNoSuggestionsResult) {
+      return explicitNoSuggestionsResult;
+    }
+
     throw createNoUsableSuggestionsError();
   }
 
@@ -489,29 +608,58 @@ function readRequestBody(request, maxBytes = MAX_RADAR_BODY_BYTES) {
 async function requestAnthropicRadar(apiKey, payload) {
   let requestPayload = { ...payload };
 
-  for (let continuationIndex = 0; continuationIndex < 3; continuationIndex += 1) {
-    const anthropicResponse = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "anthropic-version": "2023-06-01",
-        "x-api-key": apiKey,
-      },
-      body: JSON.stringify(requestPayload),
-    });
+  for (let continuationIndex = 0; continuationIndex < MAX_ANTHROPIC_CONTINUATIONS; continuationIndex += 1) {
+    let anthropicResponse = null;
+    let anthropicPayload = null;
 
-    const anthropicPayload = await anthropicResponse.json().catch(() => null);
+    for (let rateLimitRetryIndex = 0; rateLimitRetryIndex <= MAX_ANTHROPIC_RATE_LIMIT_RETRIES; rateLimitRetryIndex += 1) {
+      anthropicResponse = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "anthropic-version": "2023-06-01",
+          "x-api-key": apiKey,
+        },
+        body: JSON.stringify(requestPayload),
+      });
 
-    if (!anthropicResponse.ok) {
-      if (anthropicResponse.status === 429) {
-        throw new Error("Quota Radar temporairement atteint. Attends environ 1 minute puis relance.");
+      anthropicPayload = await anthropicResponse.json().catch(() => null);
+
+      if (anthropicResponse.ok) {
+        break;
       }
 
-      const errorMessage =
-        typeof anthropicPayload?.error?.message === "string"
-          ? anthropicPayload.error.message
-          : "La requête Radar a échoué.";
-      throw new Error(errorMessage);
+      if (anthropicResponse.status !== 429) {
+        const errorMessage =
+          typeof anthropicPayload?.error?.message === "string"
+            ? anthropicPayload.error.message
+            : "La requête Radar a échoué.";
+        throw new Error(errorMessage);
+      }
+
+      const retryAfterSeconds = parseRetryAfterSeconds(anthropicResponse.headers.get("retry-after"));
+      const retryDelayMs = Math.max(
+        250,
+        retryAfterSeconds !== null ? retryAfterSeconds * 1000 : DEFAULT_ANTHROPIC_RATE_LIMIT_RETRY_MS,
+      );
+
+      if (
+        rateLimitRetryIndex < MAX_ANTHROPIC_RATE_LIMIT_RETRIES &&
+        retryDelayMs <= MAX_ANTHROPIC_RATE_LIMIT_RETRY_MS
+      ) {
+        await wait(retryDelayMs);
+        continue;
+      }
+
+      if (retryAfterSeconds !== null && retryAfterSeconds > 0) {
+        throw new Error(`Quota Radar temporairement atteint. Reessaie dans ${retryAfterSeconds} s.`);
+      }
+
+      throw new Error("Quota Radar temporairement atteint. Attends environ 1 minute puis relance.");
+    }
+
+    if (!anthropicResponse?.ok) {
+      throw new Error("La requête Radar a échoué.");
     }
 
     if (anthropicPayload?.stop_reason !== "pause_turn" || !Array.isArray(anthropicPayload?.content)) {
@@ -602,44 +750,63 @@ async function authenticateRadarUser(headers, supabaseUrl, supabaseAnonKey) {
   return { client, user: data.user, accessToken };
 }
 
-function normalizeUsageStatus(usedCount, remainingCount, usedOn) {
+function normalizeUsageStatus(usedCount, remainingCount, usedOn, tokenBalance = 0) {
   const safeUsedCount = Math.max(0, Number.isFinite(usedCount) ? usedCount : 0);
-  const safeRemainingCount = Math.max(0, Number.isFinite(remainingCount) ? remainingCount : RADAR_DAILY_LIMIT - safeUsedCount);
+  const safeRemainingCount = Math.max(0, Number.isFinite(remainingCount) ? remainingCount : RADAR_WEEKLY_LIMIT - safeUsedCount);
+  const safeTokenBalance = Math.max(0, Number.isFinite(tokenBalance) ? tokenBalance : 0);
 
   return {
     usedCount: safeUsedCount,
     remainingCount: safeRemainingCount,
-    limit: RADAR_DAILY_LIMIT,
+    limit: RADAR_WEEKLY_LIMIT,
     usedOn,
+    tokenBalance: safeTokenBalance,
+    canUseRadar: safeRemainingCount > 0 || safeTokenBalance > 0,
+    nextAccessMode: safeRemainingCount > 0 ? "daily" : safeTokenBalance > 0 ? "token" : "blocked",
   };
 }
 
 async function claimServerRadarUsage(client, usedOn) {
-  const { data, error } = await client.rpc("claim_radar_usage", { target_day: usedOn });
+  const { data, error } = await client.rpc("claim_radar_access", { target_day: usedOn });
 
   if (error) {
-    throw createHttpError(500, "Applique le schema Supabase complet pour activer le quota Radar.");
+    throw createHttpError(500, "Applique le schema Supabase complet pour activer les quotas et jetons Radar.");
   }
 
   const payload = Array.isArray(data) ? data[0] : data;
 
   if (!payload) {
-    throw createHttpError(500, "Impossible de verifier le quota Radar du jour.");
+    throw createHttpError(500, "Impossible de verifier le quota Radar de la semaine.");
   }
 
   return {
     allowed: Boolean(payload.allowed),
     usageId: typeof payload.usage_id === "string" ? payload.usage_id : null,
-    ...normalizeUsageStatus(Number(payload.used_count ?? 0), Number(payload.remaining_count ?? 0), usedOn),
+    ledgerId: typeof payload.ledger_id === "string" ? payload.ledger_id : null,
+    accessMode:
+      payload.access_mode === "daily" || payload.access_mode === "token" || payload.access_mode === "blocked"
+        ? payload.access_mode
+        : "blocked",
+    ...normalizeUsageStatus(
+      Number(payload.used_count ?? 0),
+      Number(payload.remaining_count ?? 0),
+      usedOn,
+      Number(payload.token_balance ?? 0),
+    ),
   };
 }
 
-async function releaseServerRadarUsage(client, usageId) {
-  if (!usageId) {
+async function releaseServerRadarUsage(client, reservation, usedOn) {
+  if (!reservation?.usageId && !reservation?.ledgerId) {
     return;
   }
 
-  await client.from("radar_usage").delete().eq("id", usageId);
+  await client.rpc("refund_radar_access", {
+    access_mode: reservation.accessMode ?? "daily",
+    target_day: usedOn,
+    access_usage_id: reservation.usageId ?? null,
+    access_ledger_id: reservation.ledgerId ?? null,
+  });
 }
 
 function getPathnameFromUrl(requestUrl) {
@@ -699,6 +866,7 @@ async function processRadarHttpRequest({
     const endDate = isIsoDateInput(parsedBody?.endDate) ? String(parsedBody.endDate).trim() : "";
     const historySummary = typeof parsedBody?.historySummary === "string" ? parsedBody.historySummary.trim().slice(0, 500) : "";
     const todayIso = getDoualaIsoDate();
+    const currentUsagePeriodStart = getDoualaWeekStartIsoDate();
 
     if (!sport || !risk || !startDate || !endDate) {
       return { status: 400, payload: { error: "Sport, risque ou dates manquants." } };
@@ -737,10 +905,10 @@ async function processRadarHttpRequest({
     const effectiveStartDate = startDate < todayIso ? todayIso : startDate;
     const effectiveEndDate = endDate < effectiveStartDate ? effectiveStartDate : endDate;
 
-    reservation = await claimServerRadarUsage(authContext.client, todayIso);
+    reservation = await claimServerRadarUsage(authContext.client, currentUsagePeriodStart);
 
     if (!reservation.allowed) {
-      return { status: 429, payload: { error: "Quota du jour atteint.", usage: reservation } };
+      return { status: 429, payload: { error: "Quota de la semaine atteint. Obtiens des jetons pour continuer.", usage: reservation } };
     }
 
     const currentDateContext = `Date de reference aujourd'hui: ${todayIso}.`;
@@ -845,9 +1013,9 @@ async function processRadarHttpRequest({
 
     return { status: 500, payload: { error: "Analyse indisponible pour le moment." } };
   } catch (error) {
-    if (reservation?.usageId && authContext?.client) {
+    if ((reservation?.usageId || reservation?.ledgerId) && authContext?.client) {
       try {
-        await releaseServerRadarUsage(authContext.client, reservation.usageId);
+        await releaseServerRadarUsage(authContext.client, reservation, reservation.usedOn ?? getDoualaWeekStartIsoDate());
       } catch {
         // Ignore quota rollback errors and prefer surfacing the Radar failure itself.
       }

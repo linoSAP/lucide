@@ -37,19 +37,27 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
 import path from "node:path";
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
+import { createRadarAdminRequestHandler } from "./server/radar-admin-handler.mjs";
 import { createRadarRequestHandler } from "./server/radar-handler.mjs";
 function createRadarProxyPlugin(options) {
     var handleRadarRequest = createRadarRequestHandler(options);
+    var handleRadarAdminRequest = createRadarAdminRequestHandler(options);
     return {
         name: "lucide-radar-proxy",
         configureServer: function (server) {
             var _this = this;
             server.middlewares.use(function (request, response, next) { return __awaiter(_this, void 0, void 0, function () {
-                var handled;
+                var handledAdmin, handled;
                 return __generator(this, function (_a) {
                     switch (_a.label) {
-                        case 0: return [4 /*yield*/, handleRadarRequest(request, response)];
+                        case 0: return [4 /*yield*/, handleRadarAdminRequest(request, response)];
                         case 1:
+                            handledAdmin = _a.sent();
+                            if (handledAdmin) {
+                                return [2 /*return*/];
+                            }
+                            return [4 /*yield*/, handleRadarRequest(request, response)];
+                        case 2:
                             handled = _a.sent();
                             if (!handled) {
                                 next();
@@ -62,11 +70,17 @@ function createRadarProxyPlugin(options) {
         configurePreviewServer: function (server) {
             var _this = this;
             server.middlewares.use(function (request, response, next) { return __awaiter(_this, void 0, void 0, function () {
-                var handled;
+                var handledAdmin, handled;
                 return __generator(this, function (_a) {
                     switch (_a.label) {
-                        case 0: return [4 /*yield*/, handleRadarRequest(request, response)];
+                        case 0: return [4 /*yield*/, handleRadarAdminRequest(request, response)];
                         case 1:
+                            handledAdmin = _a.sent();
+                            if (handledAdmin) {
+                                return [2 /*return*/];
+                            }
+                            return [4 /*yield*/, handleRadarRequest(request, response)];
+                        case 2:
                             handled = _a.sent();
                             if (!handled) {
                                 next();
@@ -79,7 +93,7 @@ function createRadarProxyPlugin(options) {
     };
 }
 export default defineConfig(function (_a) {
-    var _b, _c, _d, _e, _f;
+    var _b, _c, _d, _e, _f, _g, _h, _j;
     var mode = _a.mode;
     var env = loadEnv(mode, process.cwd(), "");
     return {
@@ -89,6 +103,9 @@ export default defineConfig(function (_a) {
                 apiKey: (_b = env.ANTHROPIC_API_KEY) !== null && _b !== void 0 ? _b : "",
                 supabaseUrl: (_d = (_c = env.SUPABASE_URL) !== null && _c !== void 0 ? _c : env.VITE_SUPABASE_URL) !== null && _d !== void 0 ? _d : "",
                 supabaseAnonKey: (_f = (_e = env.SUPABASE_ANON_KEY) !== null && _e !== void 0 ? _e : env.VITE_SUPABASE_ANON_KEY) !== null && _f !== void 0 ? _f : "",
+                supabaseServiceRoleKey: (_g = env.SUPABASE_SERVICE_ROLE_KEY) !== null && _g !== void 0 ? _g : "",
+                adminPassword: (_h = env.RADAR_ADMIN_PASSWORD) !== null && _h !== void 0 ? _h : "",
+                adminSessionSecret: (_j = env.RADAR_ADMIN_SESSION_SECRET) !== null && _j !== void 0 ? _j : "",
             }),
         ],
         resolve: {

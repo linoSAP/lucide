@@ -108,9 +108,9 @@ export interface Database {
           email: string;
           amount_fcfa: number;
           token_count: number;
-          payment_method: string;
+          payment_method: RadarPaymentMethod;
+          offer_label: string | null;
           code_hash: string;
-          nonce: string;
           issued_at: string;
           expires_at: string;
           redeemed_at: string | null;
@@ -123,9 +123,9 @@ export interface Database {
           email: string;
           amount_fcfa: number;
           token_count: number;
-          payment_method: string;
+          payment_method: RadarPaymentMethod;
+          offer_label?: string | null;
           code_hash: string;
-          nonce: string;
           issued_at?: string;
           expires_at: string;
           redeemed_at?: string | null;
@@ -138,9 +138,9 @@ export interface Database {
           email?: string;
           amount_fcfa?: number;
           token_count?: number;
-          payment_method?: string;
+          payment_method?: RadarPaymentMethod;
+          offer_label?: string | null;
           code_hash?: string;
-          nonce?: string;
           issued_at?: string;
           expires_at?: string;
           redeemed_at?: string | null;
@@ -220,15 +220,7 @@ export interface Database {
       };
       redeem_radar_token_code: {
         Args: {
-          p_code_hash: string;
-          p_nonce: string;
-          p_email: string;
-          p_token_count: number;
-          p_amount_fcfa: number;
-          p_payment_method: string;
-          p_expires_at: string;
-          p_redeemed_by_user_id: string;
-          p_redeemed_by_email: string;
+          plain_code: string;
         };
         Returns: {
           token_balance: number;

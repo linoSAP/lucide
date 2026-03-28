@@ -1,7 +1,8 @@
 import { getSupabaseOrThrow, isSupabaseConfigured } from "@/lib/supabase";
+import type { RadarAccessMode } from "@/types/supabase";
 
 export const radarSports = ["Football", "Basketball", "Tennis"] as const;
-export const RADAR_DAILY_LIMIT = 2;
+export const RADAR_WEEKLY_LIMIT = 2;
 const radarUsageStoragePrefix = "lucide:radar-usage";
 const doualaDateFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Africa/Douala",
@@ -71,11 +72,16 @@ export interface RadarUsageStatus {
   remainingCount: number;
   limit: number;
   usedOn: string;
+  tokenBalance: number;
+  canUseRadar: boolean;
+  nextAccessMode: RadarAccessMode;
 }
 
 export interface RadarUsageReservation extends RadarUsageStatus {
   allowed: boolean;
   usageId: string | null;
+  ledgerId: string | null;
+  accessMode: RadarAccessMode;
 }
 
 export interface RadarRequestInput {
@@ -86,6 +92,11 @@ export interface RadarRequestInput {
   historySummary?: string;
 }
 
+export interface RadarTokenRedemptionResult {
+  tokenBalance: number;
+  redeemedTokenCount: number;
+}
+
 export function getRiskMeta(risk: RadarRiskValue) {
   return radarRiskLevels.find((level) => level.value === risk) ?? radarRiskLevels[1];
 }
@@ -94,18 +105,46 @@ export function getRiskLabel(risk: RadarRiskValue) {
   return getRiskMeta(risk).label;
 }
 
-function getRadarUsageDay() {
-  return doualaDateFormatter.format(new Date());
+function getDoualaDateParts(date = new Date()) {
+  const parts = doualaDateFormatter.formatToParts(date);
+
+  return {
+    year: Number(parts.find((part) => part.type === "year")?.value ?? "0"),
+    month: Number(parts.find((part) => part.type === "month")?.value ?? "0"),
+    day: Number(parts.find((part) => part.type === "day")?.value ?? "0"),
+  };
 }
 
-function normalizeRadarUsageStatus(usedCount: number, usedOn: string): RadarUsageStatus {
+function formatUtcDateToIso(date: Date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getRadarUsageWeekStart(date = new Date()) {
+  const { year, month, day } = getDoualaDateParts(date);
+  const weekDate = new Date(Date.UTC(year, month - 1, day));
+  const weekday = weekDate.getUTCDay();
+  const daysSinceMonday = (weekday + 6) % 7;
+
+  weekDate.setUTCDate(weekDate.getUTCDate() - daysSinceMonday);
+  return formatUtcDateToIso(weekDate);
+}
+
+function normalizeRadarUsageStatus(usedCount: number, usedOn: string, tokenBalance = 0): RadarUsageStatus {
   const safeUsedCount = Math.max(0, usedCount);
+  const safeTokenBalance = Math.max(0, tokenBalance);
+  const remainingCount = Math.max(0, RADAR_WEEKLY_LIMIT - safeUsedCount);
 
   return {
     usedCount: safeUsedCount,
-    remainingCount: Math.max(0, RADAR_DAILY_LIMIT - safeUsedCount),
-    limit: RADAR_DAILY_LIMIT,
+    remainingCount,
+    limit: RADAR_WEEKLY_LIMIT,
     usedOn,
+    tokenBalance: safeTokenBalance,
+    canUseRadar: remainingCount > 0 || safeTokenBalance > 0,
+    nextAccessMode: remainingCount > 0 ? "daily" : safeTokenBalance > 0 ? "token" : "blocked",
   };
 }
 
@@ -150,10 +189,12 @@ function createLocalRadarUsageId(userId: string, usedOn: string) {
 function claimLocalRadarUsage(userId: string, usedOn: string): RadarUsageReservation {
   const currentCount = readLocalRadarUsageCount(userId, usedOn);
 
-  if (currentCount >= RADAR_DAILY_LIMIT) {
+  if (currentCount >= RADAR_WEEKLY_LIMIT) {
     return {
       allowed: false,
       usageId: null,
+      ledgerId: null,
+      accessMode: "blocked",
       ...normalizeRadarUsageStatus(currentCount, usedOn),
     };
   }
@@ -164,20 +205,30 @@ function claimLocalRadarUsage(userId: string, usedOn: string): RadarUsageReserva
   return {
     allowed: true,
     usageId: createLocalRadarUsageId(userId, usedOn),
+    ledgerId: null,
+    accessMode: "daily",
     ...normalizeRadarUsageStatus(nextCount, usedOn),
   };
 }
 
 function isRadarUsageSchemaError(message: string) {
   const normalized = message.toLowerCase();
-  return normalized.includes("claim_radar_usage") || normalized.includes("radar_usage");
+  return (
+    normalized.includes("claim_radar_usage") ||
+    normalized.includes("claim_radar_access") ||
+    normalized.includes("refund_radar_access") ||
+    normalized.includes("redeem_radar_token_code") ||
+    normalized.includes("get_radar_token_balance") ||
+    normalized.includes("radar_usage") ||
+    normalized.includes("radar_token")
+  );
 }
 
 export async function getRadarUsageStatus(userId: string): Promise<RadarUsageStatus> {
-  const usedOn = getRadarUsageDay();
+  const usedOn = getRadarUsageWeekStart();
 
   if (!isSupabaseConfigured) {
-    return normalizeRadarUsageStatus(readLocalRadarUsageCount(userId, usedOn), usedOn);
+    return normalizeRadarUsageStatus(readLocalRadarUsageCount(userId, usedOn), usedOn, 0);
   }
 
   const client = getSupabaseOrThrow();
@@ -189,24 +240,34 @@ export async function getRadarUsageStatus(userId: string): Promise<RadarUsageSta
 
   if (error) {
     if (isRadarUsageSchemaError(error.message)) {
-      return normalizeRadarUsageStatus(readLocalRadarUsageCount(userId, usedOn), usedOn);
+      return normalizeRadarUsageStatus(readLocalRadarUsageCount(userId, usedOn), usedOn, 0);
     }
 
     throw new Error(error.message);
   }
 
-  return normalizeRadarUsageStatus(count ?? 0, usedOn);
+  const { data: tokenBalanceValue, error: tokenBalanceError } = await client.rpc("get_radar_token_balance", {});
+
+  if (tokenBalanceError) {
+    if (isRadarUsageSchemaError(tokenBalanceError.message)) {
+      return normalizeRadarUsageStatus(count ?? 0, usedOn, 0);
+    }
+
+    throw new Error(tokenBalanceError.message);
+  }
+
+  return normalizeRadarUsageStatus(count ?? 0, usedOn, Number(tokenBalanceValue ?? 0));
 }
 
 export async function claimRadarUsage(userId: string): Promise<RadarUsageReservation> {
-  const usedOn = getRadarUsageDay();
+  const usedOn = getRadarUsageWeekStart();
 
   if (!isSupabaseConfigured) {
     return claimLocalRadarUsage(userId, usedOn);
   }
 
   const client = getSupabaseOrThrow();
-  const { data, error } = await client.rpc("claim_radar_usage", { target_day: usedOn });
+  const { data, error } = await client.rpc("claim_radar_access", { target_day: usedOn });
 
   if (error) {
     if (error.message.includes("AUTH_REQUIRED")) {
@@ -223,22 +284,27 @@ export async function claimRadarUsage(userId: string): Promise<RadarUsageReserva
   const payload = Array.isArray(data) ? data[0] : data;
 
   if (!payload) {
-    throw new Error("Impossible de verifier le quota Radar du jour.");
+    throw new Error("Impossible de verifier le quota Radar de la semaine.");
   }
 
   return {
     allowed: Boolean(payload.allowed),
     usageId: typeof payload.usage_id === "string" ? payload.usage_id : null,
-    ...normalizeRadarUsageStatus(Number(payload.used_count ?? 0), usedOn),
+    ledgerId: typeof payload.ledger_id === "string" ? payload.ledger_id : null,
+    accessMode:
+      payload.access_mode === "daily" || payload.access_mode === "token" || payload.access_mode === "blocked"
+        ? payload.access_mode
+        : "blocked",
+    ...normalizeRadarUsageStatus(Number(payload.used_count ?? 0), usedOn, Number(payload.token_balance ?? 0)),
   };
 }
 
-export async function releaseRadarUsage(usageId: string) {
-  if (!usageId) {
+export async function releaseRadarUsage(usageId: string, accessMode: RadarAccessMode = "daily", ledgerId: string | null = null) {
+  if (!usageId && !ledgerId) {
     return;
   }
 
-  if (usageId.startsWith("local:")) {
+  if (usageId && usageId.startsWith("local:")) {
     const [, userId, usedOn] = usageId.split(":", 4);
 
     if (!userId || !usedOn) {
@@ -255,7 +321,12 @@ export async function releaseRadarUsage(usageId: string) {
   }
 
   const client = getSupabaseOrThrow();
-  const { error } = await client.from("radar_usage").delete().eq("id", usageId);
+  const { error } = await client.rpc("refund_radar_access", {
+    access_mode: accessMode,
+    access_usage_id: usageId || null,
+    access_ledger_id: ledgerId,
+    target_day: getRadarUsageWeekStart(),
+  });
 
   if (error) {
     if (isRadarUsageSchemaError(error.message)) {
@@ -264,6 +335,66 @@ export async function releaseRadarUsage(usageId: string) {
 
     throw new Error(error.message);
   }
+}
+
+export async function redeemRadarTokenCode(plainCode: string): Promise<RadarTokenRedemptionResult> {
+  const normalizedCode = plainCode.trim().toUpperCase();
+
+  if (!normalizedCode) {
+    throw new Error("Entre le code que tu as recu.");
+  }
+
+  if (!isSupabaseConfigured) {
+    throw new Error("Supabase n'est pas configure.");
+  }
+
+  const client = getSupabaseOrThrow();
+  const { data, error } = await client.rpc("redeem_radar_token_code", { plain_code: normalizedCode });
+
+  if (error) {
+    const normalizedMessage = error.message.toLowerCase();
+
+    if (normalizedMessage.includes("auth_required")) {
+      throw new Error("Connecte-toi pour activer un code.");
+    }
+
+    if (normalizedMessage.includes("code_required")) {
+      throw new Error("Entre le code que tu as recu.");
+    }
+
+    if (normalizedMessage.includes("code_invalid")) {
+      throw new Error("Code invalide.");
+    }
+
+    if (normalizedMessage.includes("code_already_redeemed")) {
+      throw new Error("Ce code a deja ete utilise.");
+    }
+
+    if (normalizedMessage.includes("code_expired")) {
+      throw new Error("Ce code a expire.");
+    }
+
+    if (normalizedMessage.includes("code_email_mismatch")) {
+      throw new Error("Ce code est reserve a un autre email.");
+    }
+
+    if (normalizedMessage.includes("email_required")) {
+      throw new Error("Ton compte doit avoir un email valide.");
+    }
+
+    throw new Error(error.message);
+  }
+
+  const payload = Array.isArray(data) ? data[0] : data;
+
+  if (!payload) {
+    throw new Error("Impossible d'activer ce code pour le moment.");
+  }
+
+  return {
+    tokenBalance: Math.max(0, Number(payload.token_balance ?? 0)),
+    redeemedTokenCount: Math.max(0, Number(payload.redeemed_token_count ?? 0)),
+  };
 }
 
 export async function fetchRadarSuggestions(input: RadarRequestInput): Promise<RadarResult> {

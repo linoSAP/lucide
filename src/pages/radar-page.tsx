@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, BookmarkPlus, LoaderCircle, Sparkles, X } from "lucide-react";
 import { PageShell } from "@/components/layout/page-shell";
+import { RadarCreditsModal } from "@/components/radar/radar-credits-modal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +17,7 @@ import {
 import { formatAmountValue, formatPercent } from "@/lib/format";
 import { useBets } from "@/hooks/use-bets";
 import {
-  RADAR_DAILY_LIMIT,
+  RADAR_WEEKLY_LIMIT,
   fetchRadarSuggestions,
   getRadarUsageStatus,
   getRiskLabel,
@@ -284,6 +285,7 @@ export function RadarPage() {
   const [stakeAmount, setStakeAmount] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSavingSuggestion, setIsSavingSuggestion] = useState(false);
+  const [isCreditsModalOpen, setIsCreditsModalOpen] = useState(false);
 
   const requestedWindow = useMemo(
     () => normalizeRadarWindow(dateMode, selectedDate, rangeStart, rangeEnd),
@@ -299,7 +301,8 @@ export function RadarPage() {
   const historySummary = useMemo(() => buildRadarHistorySummary(bets), [bets]);
   const parsedBookmakerOdds = parseDecimal(bookmakerOdds);
   const parsedStakeAmount = parseDecimal(stakeAmount);
-  const isRadarLimitReached = Boolean(usageStatus && usageStatus.remainingCount <= 0);
+  const isRadarLimitReached = Boolean(usageStatus && usageStatus.canUseRadar === false);
+  const shouldShowTokenCta = Boolean(usageStatus && usageStatus.remainingCount <= 0 && usageStatus.tokenBalance <= 0);
   const canSaveSuggestion =
     Boolean(session?.user) &&
     Boolean(selectedSuggestion) &&
@@ -342,6 +345,20 @@ export function RadarPage() {
       isCancelled = true;
     };
   }, [session?.user?.id]);
+
+  async function refreshUsageStatus() {
+    if (!session?.user) {
+      setUsageStatus(null);
+      return;
+    }
+
+    try {
+      const nextStatus = await getRadarUsageStatus(session.user.id);
+      setUsageStatus(nextStatus);
+    } catch {
+      // Ignore manual refresh errors in Radar.
+    }
+  }
 
   useEffect(() => {
     if (!selectedSuggestion) {
@@ -419,12 +436,7 @@ export function RadarPage() {
       setSuggestions(result.suggestions);
       setUsageStatus(result.usage ?? null);
     } catch (nextError) {
-      try {
-        const nextStatus = await getRadarUsageStatus(session.user.id);
-        setUsageStatus(nextStatus);
-      } catch {
-        // Ignore quota refresh errors after a failed analysis.
-      }
+      await refreshUsageStatus();
 
       setSuggestions([]);
       setAnalysisWindowShifted(false);
@@ -579,12 +591,32 @@ export function RadarPage() {
 
             <div className="flex flex-wrap items-center gap-2">
               <MetaPill>{`Dates ${requestedWindowLabel}`}</MetaPill>
-              {usageStatus ? <MetaPill>{`Aujourd'hui ${usageStatus.usedCount}/${usageStatus.limit}`}</MetaPill> : null}
+              {usageStatus ? <MetaPill>{`Cette semaine ${usageStatus.usedCount}/${usageStatus.limit}`}</MetaPill> : null}
+              {usageStatus ? <MetaPill>{`Jetons ${usageStatus.tokenBalance}`}</MetaPill> : null}
+              <Button variant="ghost" size="sm" className="rounded-full" onClick={() => setIsCreditsModalOpen(true)}>
+                Jetons Radar
+              </Button>
             </div>
 
-            <p className="px-1 text-xs leading-5 text-muted-foreground">{RADAR_DAILY_LIMIT} / jour.</p>
+            <p className="px-1 text-xs leading-5 text-muted-foreground">
+              {usageStatus?.nextAccessMode === "token"
+                ? "Le quota gratuit de la semaine est vide. La prochaine analyse utilisera 1 jeton."
+                : `${RADAR_WEEKLY_LIMIT} / semaine.`}
+            </p>
           </div>
         </div>
+
+        {shouldShowTokenCta ? (
+          <div className="rounded-[20px] border border-warning/18 bg-warning/8 px-4 py-4 shadow-soft">
+            <p className="text-sm text-foreground">Le quota gratuit de la semaine est atteint.</p>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              Prends un pack de jetons pour continuer a utiliser Radar sans attendre la semaine suivante.
+            </p>
+            <Button variant="warning" size="sm" className="mt-3 rounded-full" onClick={() => setIsCreditsModalOpen(true)}>
+              Obtenir des jetons
+            </Button>
+          </div>
+        ) : null}
 
         {saveMessage ? (
           <div className="rounded-[20px] border border-positive/18 bg-positive/8 px-4 py-4 shadow-soft">
@@ -741,6 +773,14 @@ export function RadarPage() {
           </>
         ) : null}
       </AnimatePresence>
+
+      <RadarCreditsModal
+        isOpen={isCreditsModalOpen}
+        onClose={() => setIsCreditsModalOpen(false)}
+        usageStatus={usageStatus}
+        sessionEmail={session?.user.email ?? ""}
+        onRedeemed={refreshUsageStatus}
+      />
     </>
   );
 }
