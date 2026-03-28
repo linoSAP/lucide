@@ -4,9 +4,12 @@ const RADAR_WEEKLY_LIMIT = 2;
 const MAX_RADAR_BODY_BYTES = 16 * 1024;
 const MAX_RADAR_WINDOW_DAYS = 7;
 const MAX_ANTHROPIC_CONTINUATIONS = 3;
-const MAX_ANTHROPIC_RATE_LIMIT_RETRIES = 1;
-const MAX_ANTHROPIC_RATE_LIMIT_RETRY_MS = 3000;
-const DEFAULT_ANTHROPIC_RATE_LIMIT_RETRY_MS = 1200;
+const MAX_ANTHROPIC_NETWORK_RETRIES = 2;
+const MAX_ANTHROPIC_RATE_LIMIT_RETRIES = 2;
+const MAX_ANTHROPIC_RATE_LIMIT_RETRY_MS = 15000;
+const DEFAULT_ANTHROPIC_NETWORK_RETRY_MS = 1500;
+const DEFAULT_ANTHROPIC_RATE_LIMIT_RETRY_MS = 4000;
+const MAX_ANTHROPIC_TOOL_RETRY_MAX_TOKENS = 900;
 const allowedRadarSports = new Set(["Football", "Basketball", "Tennis"]);
 const allowedRadarRisks = new Set(["prudent", "balanced", "aggressive"]);
 
@@ -26,11 +29,12 @@ const anthropicSystemPrompt = [
   "Tu tiens compte de la fenetre de dates demandee quand elle est fournie.",
   "Si tu ne peux pas verifier un evenement a venir avec sa date, tu ne le proposes pas.",
   "Pour un evenement prevu aujourd'hui, tu verifies qu'il n'a pas deja commence; au moindre doute, tu l'exclus.",
+  "Tu restes tres concis: label court, rationale et caution breves, sans texte inutile.",
   "Tu renvoies un seul objet JSON brut, sans markdown, sans commentaire, sans texte avant ou apres.",
   "Réponds uniquement en JSON.",
 ].join(" ");
 
-const anthropicRadarTools = [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }];
+const anthropicRadarTools = [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }];
 
 const genericEventPatterns = [
   /^match\b/i,
@@ -106,6 +110,56 @@ function createHttpError(statusCode, message) {
 
 function getErrorStatusCode(error) {
   return typeof error?.statusCode === "number" ? error.statusCode : 500;
+}
+
+function getRadarServiceUnavailableMessage() {
+  return "Radar est temporairement indisponible. Reessaie un peu plus tard.";
+}
+
+function getMaskedRadarUpstreamErrorMessage(statusCode, rawMessage) {
+  const normalizedMessage = typeof rawMessage === "string" ? rawMessage.toLowerCase() : "";
+
+  if (
+    normalizedMessage.includes("credit balance is too low") ||
+    normalizedMessage.includes("plans & billing") ||
+    normalizedMessage.includes("purchase credits") ||
+    normalizedMessage.includes("billing")
+  ) {
+    return getRadarServiceUnavailableMessage();
+  }
+
+  if (
+    normalizedMessage.includes("api key") ||
+    normalizedMessage.includes("authentication") ||
+    normalizedMessage.includes("unauthorized") ||
+    normalizedMessage.includes("forbidden")
+  ) {
+    return getRadarServiceUnavailableMessage();
+  }
+
+  if (statusCode >= 400) {
+    return getRadarServiceUnavailableMessage();
+  }
+
+  return "Analyse indisponible pour le moment.";
+}
+
+function getMaskedRadarInternalErrorMessage(error) {
+  const rawMessage = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const normalizedMessage = rawMessage.toLowerCase();
+
+  if (
+    normalizedMessage.includes("fetch failed") ||
+    normalizedMessage.includes("network") ||
+    normalizedMessage.includes("socket") ||
+    normalizedMessage.includes("econnreset") ||
+    normalizedMessage.includes("etimedout") ||
+    normalizedMessage.includes("timeout")
+  ) {
+    return getRadarServiceUnavailableMessage();
+  }
+
+  return rawMessage || "Erreur interne sur Radar.";
 }
 
 function getDoualaIsoDate(date = new Date()) {
@@ -329,7 +383,7 @@ function buildShiftNote(requestedStartDate, requestedEndDate, nextStartDate, nex
 }
 
 function buildRadarAttempts(requestedStartDate, requestedEndDate) {
-  return Array.from({ length: 3 }, (_, index) => {
+  return Array.from({ length: 4 }, (_, index) => {
     const offset = index;
     const startDate = addDaysToIsoDate(requestedStartDate, offset);
     const endDate = addDaysToIsoDate(requestedEndDate, offset);
@@ -584,6 +638,22 @@ function getMarketGuideForSport(sport) {
   return "Varie les marches de maniere prudente.";
 }
 
+function getSearchFocusForSport(sport) {
+  if (sport === "Football") {
+    return "Priorite aux grandes ligues et coupes avec calendrier public fiable, sur sites officiels ou medias sportifs reconnus.";
+  }
+
+  if (sport === "Basketball") {
+    return "Priorite aux calendriers publics NBA, EuroLeague et grandes competitions nationales clairement programmees; evite les affiches floues ou mal datees.";
+  }
+
+  if (sport === "Tennis") {
+    return "Priorite aux matchs ATP, WTA et Challenger avec ordre de jeu ou calendrier officiel clairement publie; propose seulement des affiches singles dont la date est verifiee.";
+  }
+
+  return "Priorite aux competitions avec calendrier public fiable.";
+}
+
 function readRequestBody(request, maxBytes = MAX_RADAR_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -607,21 +677,33 @@ function readRequestBody(request, maxBytes = MAX_RADAR_BODY_BYTES) {
 
 async function requestAnthropicRadar(apiKey, payload) {
   let requestPayload = { ...payload };
+  const accumulatedContent = [];
+  let didRetryToolUseAfterMaxTokens = false;
 
   for (let continuationIndex = 0; continuationIndex < MAX_ANTHROPIC_CONTINUATIONS; continuationIndex += 1) {
     let anthropicResponse = null;
     let anthropicPayload = null;
 
     for (let rateLimitRetryIndex = 0; rateLimitRetryIndex <= MAX_ANTHROPIC_RATE_LIMIT_RETRIES; rateLimitRetryIndex += 1) {
-      anthropicResponse = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "anthropic-version": "2023-06-01",
-          "x-api-key": apiKey,
-        },
-        body: JSON.stringify(requestPayload),
-      });
+      try {
+        anthropicResponse = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "anthropic-version": "2023-06-01",
+            "x-api-key": apiKey,
+          },
+          body: JSON.stringify(requestPayload),
+        });
+      } catch (error) {
+        if (rateLimitRetryIndex < MAX_ANTHROPIC_NETWORK_RETRIES) {
+          await wait(DEFAULT_ANTHROPIC_NETWORK_RETRY_MS * (rateLimitRetryIndex + 1));
+          continue;
+        }
+
+        console.error("[radar] Upstream network failure.", error);
+        throw new Error(getRadarServiceUnavailableMessage());
+      }
 
       anthropicPayload = await anthropicResponse.json().catch(() => null);
 
@@ -630,11 +712,12 @@ async function requestAnthropicRadar(apiKey, payload) {
       }
 
       if (anthropicResponse.status !== 429) {
-        const errorMessage =
+        const rawErrorMessage =
           typeof anthropicPayload?.error?.message === "string"
             ? anthropicPayload.error.message
-            : "La requête Radar a échoué.";
-        throw new Error(errorMessage);
+            : "";
+        console.error("[radar] Upstream provider error.", anthropicResponse.status, rawErrorMessage || "<empty>");
+        throw new Error(getMaskedRadarUpstreamErrorMessage(anthropicResponse.status, rawErrorMessage));
       }
 
       const retryAfterSeconds = parseRetryAfterSeconds(anthropicResponse.headers.get("retry-after"));
@@ -662,25 +745,67 @@ async function requestAnthropicRadar(apiKey, payload) {
       throw new Error("La requête Radar a échoué.");
     }
 
-    if (anthropicPayload?.stop_reason !== "pause_turn" || !Array.isArray(anthropicPayload?.content)) {
+    if (!Array.isArray(anthropicPayload?.content)) {
       return anthropicPayload;
     }
 
-    const previousMessages = Array.isArray(requestPayload.messages) ? requestPayload.messages : [];
+    accumulatedContent.push(...anthropicPayload.content);
 
-    requestPayload = {
-      ...requestPayload,
-      messages: [
-        ...previousMessages,
-        {
-          role: "assistant",
-          content: anthropicPayload.content,
-        },
-      ],
+    if (anthropicPayload?.stop_reason === "pause_turn") {
+      const previousMessages = Array.isArray(requestPayload.messages) ? requestPayload.messages : [];
+
+      requestPayload = {
+        ...requestPayload,
+        messages: [
+          ...previousMessages,
+          {
+            role: "assistant",
+            content: anthropicPayload.content,
+          },
+        ],
+      };
+      continue;
+    }
+
+    if (anthropicPayload?.stop_reason === "max_tokens") {
+      const lastContentBlock = anthropicPayload.content[anthropicPayload.content.length - 1] ?? null;
+
+      if (lastContentBlock?.type === "tool_use" && !didRetryToolUseAfterMaxTokens) {
+        didRetryToolUseAfterMaxTokens = true;
+        accumulatedContent.length = 0;
+        requestPayload = {
+          ...payload,
+          max_tokens: Math.max(Number(payload?.max_tokens ?? 0), MAX_ANTHROPIC_TOOL_RETRY_MAX_TOKENS),
+        };
+        continue;
+      }
+
+      const previousMessages = Array.isArray(requestPayload.messages) ? requestPayload.messages : [];
+
+      requestPayload = {
+        ...requestPayload,
+        messages: [
+          ...previousMessages,
+          {
+            role: "assistant",
+            content: anthropicPayload.content,
+          },
+          {
+            role: "user",
+            content: "Continue uniquement le JSON Radar en cours, sans recommencer, sans markdown et sans texte hors JSON.",
+          },
+        ],
+      };
+      continue;
+    }
+
+    return {
+      ...anthropicPayload,
+      content: accumulatedContent,
     };
   }
 
-  throw new Error("La recherche Radar a pris trop de tours.");
+  throw new Error("La reponse Radar a ete coupee trop tot. Relance l'analyse.");
 }
 
 function createServerSupabaseClient(supabaseUrl, supabaseAnonKey, accessToken) {
@@ -731,7 +856,8 @@ function getBearerToken(headers) {
 
 async function authenticateRadarUser(headers, supabaseUrl, supabaseAnonKey) {
   if (!supabaseUrl || !supabaseAnonKey) {
-    throw createHttpError(500, "Supabase serveur manquant pour securiser Radar.");
+    console.error("[radar] Missing server auth configuration for secured Radar requests.");
+    throw createHttpError(500, getRadarServiceUnavailableMessage());
   }
 
   const accessToken = getBearerToken(headers);
@@ -770,13 +896,14 @@ async function claimServerRadarUsage(client, usedOn) {
   const { data, error } = await client.rpc("claim_radar_access", { target_day: usedOn });
 
   if (error) {
-    throw createHttpError(500, "Applique le schema Supabase complet pour activer les quotas et jetons Radar.");
+    console.error("[radar] Unable to claim radar usage.", error.message);
+    throw createHttpError(500, getRadarServiceUnavailableMessage());
   }
 
   const payload = Array.isArray(data) ? data[0] : data;
 
   if (!payload) {
-    throw createHttpError(500, "Impossible de verifier le quota Radar de la semaine.");
+    throw createHttpError(500, getRadarServiceUnavailableMessage());
   }
 
   return {
@@ -837,10 +964,11 @@ async function processRadarHttpRequest({
   }
 
   if (!apiKey) {
+    console.error("[radar] Missing provider API key.");
     return {
       status: 500,
       payload: {
-        error: "Ajoute ANTHROPIC_API_KEY dans ton .env pour activer Radar.",
+        error: getRadarServiceUnavailableMessage(),
       },
     };
   }
@@ -916,6 +1044,7 @@ async function processRadarHttpRequest({
       ? `Contexte historique utilisateur: ${historySummary}.`
       : "Contexte historique utilisateur: aucun historique exploitable pour le moment.";
     const marketGuide = getMarketGuideForSport(sport);
+    const searchFocus = getSearchFocusForSport(sport);
     const attempts = buildRadarAttempts(effectiveStartDate, effectiveEndDate);
     let lastNoUsableSuggestions = false;
 
@@ -930,7 +1059,7 @@ async function processRadarHttpRequest({
 
       const anthropicPayload = await requestAnthropicRadar(apiKey, {
         model: "claude-sonnet-4-20250514",
-        max_tokens: 620,
+        max_tokens: 700,
         temperature: 0.2,
         system: anthropicSystemPrompt,
         tools: anthropicRadarTools,
@@ -945,6 +1074,7 @@ async function processRadarHttpRequest({
               fallbackContext,
               historyContext,
               marketGuide,
+              searchFocus,
               "Tu peux retourner de 0 a 3 combines realistes avec 2 a 3 selections maximum par combine.",
               "Ne cite jamais un match deja joue, une finale historique ou un tournoi termine.",
               `Aucune selection ne doit avoir un event_date en dehors de la fenetre ${attempt.startDate} -> ${attempt.endDate} ni avant ${todayIso}.`,
@@ -1021,7 +1151,7 @@ async function processRadarHttpRequest({
       }
     }
 
-    const message = error instanceof Error ? error.message : "Erreur interne sur Radar.";
+    const message = getMaskedRadarInternalErrorMessage(error);
     return { status: getErrorStatusCode(error), payload: { error: message } };
   }
 }

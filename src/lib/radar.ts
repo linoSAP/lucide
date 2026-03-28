@@ -3,6 +3,7 @@ import type { RadarAccessMode } from "@/types/supabase";
 
 export const radarSports = ["Football", "Basketball", "Tennis"] as const;
 export const RADAR_WEEKLY_LIMIT = 2;
+const RADAR_REQUEST_TIMEOUT_MS = 75000;
 const radarUsageStoragePrefix = "lucide:radar-usage";
 const doualaDateFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Africa/Douala",
@@ -416,7 +417,7 @@ export async function fetchRadarSuggestions(input: RadarRequestInput): Promise<R
   }
 
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 45000);
+  const timeoutId = window.setTimeout(() => controller.abort(), RADAR_REQUEST_TIMEOUT_MS);
   let response: Response;
 
   try {
