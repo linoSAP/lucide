@@ -29,6 +29,8 @@ const anthropicSystemPrompt = [
   "Tu tiens compte de la fenetre de dates demandee quand elle est fournie.",
   "Si tu ne peux pas verifier un evenement a venir avec sa date, tu ne le proposes pas.",
   "Pour un evenement prevu aujourd'hui, tu verifies qu'il n'a pas deja commence; au moindre doute, tu l'exclus.",
+  "Une coupe, une competition europeenne, la Champions League, la NBA, l'EuroLeague, un tournoi ATP ou WTA suffisent pleinement; tu n'attends pas une ligue nationale pour proposer un prono.",
+  "Un prono simple fiable vaut mieux qu'aucune suggestion quand la date est pauvre.",
   "Tu restes tres concis: label court, rationale et caution breves, sans texte inutile.",
   "Tu renvoies un seul objet JSON brut, sans markdown, sans commentaire, sans texte avant ou apres.",
   "Réponds uniquement en JSON.",
@@ -382,6 +384,46 @@ function buildShiftNote(requestedStartDate, requestedEndDate, nextStartDate, nex
   return `Aucun evenement plausible entre ${requestedStartDate} et ${requestedEndDate}. Radar a glisse vers une fenetre proche, du ${nextStartDate} au ${nextEndDate}.`;
 }
 
+function noteSuggestsConfirmedEventsExist(note) {
+  const normalizedNote = normalizeFreeText(note).toLowerCase();
+
+  if (!normalizedNote) {
+    return false;
+  }
+
+  const mentionsConfirmedEvents =
+    (normalizedNote.includes("confirm") || normalizedNote.includes("verifie")) &&
+    (normalizedNote.includes("match") ||
+      normalizedNote.includes("evenement") ||
+      normalizedNote.includes("champions league") ||
+      normalizedNote.includes("ligue des champions") ||
+      normalizedNote.includes("nba") ||
+      normalizedNote.includes("euroleague") ||
+      normalizedNote.includes("atp") ||
+      normalizedNote.includes("wta") ||
+      normalizedNote.includes("challenger") ||
+      normalizedNote.includes("coupe") ||
+      normalizedNote.includes("tournoi"));
+
+  if (!mentionsConfirmedEvents) {
+    return false;
+  }
+
+  return (
+    normalizedNote.includes("seuls les matchs") ||
+    normalizedNote.includes("seulement") ||
+    normalizedNote.includes("champions league") ||
+    normalizedNote.includes("ligue des champions") ||
+    normalizedNote.includes("nba") ||
+    normalizedNote.includes("euroleague") ||
+    normalizedNote.includes("atp") ||
+    normalizedNote.includes("wta") ||
+    normalizedNote.includes("challenger") ||
+    normalizedNote.includes("coupe") ||
+    normalizedNote.includes("tournoi")
+  );
+}
+
 function buildRadarAttempts(requestedStartDate, requestedEndDate) {
   return Array.from({ length: 6 }, (_, index) => {
     const offset = index;
@@ -501,6 +543,10 @@ function buildExplicitNoSuggestionsResult(parsed, requestedStartDate, requestedE
     return null;
   }
 
+  if (noteSuggestsConfirmedEventsExist(parsed?.note)) {
+    return null;
+  }
+
   const payloadWindow = readRadarWindowFromPayload(parsed);
   const startDate = payloadWindow?.startDate ?? fallbackWindow?.startDate ?? requestedStartDate;
   const endDate = payloadWindow?.endDate ?? fallbackWindow?.endDate ?? requestedEndDate;
@@ -557,7 +603,7 @@ function normalizeRadarResult(parsed, requestedStartDate, requestedEndDate, toda
         }) === index;
       });
 
-      if (uniqueLegs.length < 2 || !oddsValue || !rationale) {
+      if (uniqueLegs.length < 1 || !oddsValue || !rationale) {
         return null;
       }
 
@@ -1075,8 +1121,9 @@ async function processRadarHttpRequest({
               historyContext,
               marketGuide,
               searchFocus,
-              "Tu peux retourner de 0 a 4 combines realistes avec 2 a 3 selections maximum par combine.",
+              "Tu peux retourner de 0 a 4 suggestions realistes avec 1 a 3 selections maximum par suggestion.",
               "Ne cite jamais un match deja joue, une finale historique ou un tournoi termine.",
+              "Une competition de coupe ou de tournoi compte pleinement: tu ne te limites jamais aux ligues nationales.",
               `Aucune selection ne doit avoir un event_date en dehors de la fenetre ${attempt.startDate} -> ${attempt.endDate} ni avant ${todayIso}.`,
               "Si tu n'es pas sur qu'un evenement est a venir dans la fenetre demandee, tu l'exclus au lieu de deviner.",
               "Si aucun evenement plausible n'existe dans la fenetre demandee, tu peux te decaler vers la prochaine fenetre utile, au maximum 3 jours apres la fin demandee.",
@@ -1087,8 +1134,10 @@ async function processRadarHttpRequest({
               "Diversifie les marches sur les suggestions quand c'est plausible.",
               "Evite de reutiliser les memes affiches sauf si c'est vraiment incontournable.",
               "N'abuse pas des simples vainqueurs et n'abuse pas des overs/unders.",
-              "Si tu ne peux pas produire une suggestion plausible sans halluciner, retourne suggestions: [].",
-              "Pour chaque combine, retourne un label court, les selections, la cote estimee, une logique concise et un point de vigilance concis.",
+              "Si au moins un match confirme existe dans la fenetre, meme s'il s'agit seulement de Champions League, de coupe ou de tournoi, propose au moins une suggestion a partir de lui.",
+              "Si seuls un ou deux evenements solides existent, propose quand meme un single ou une suggestion courte plutot que suggestions: [].",
+              "Si tu ne peux vraiment pas produire une suggestion plausible sans halluciner, retourne suggestions: [].",
+              "Pour chaque suggestion, retourne un label court, les selections, la cote estimee, une logique concise et un point de vigilance concis.",
               "La reponse doit etre un seul objet JSON brut, sans balise markdown et sans phrase d'introduction ou de conclusion.",
               "Si la fenetre est decalee, tu dois le signaler clairement dans note et used_window.",
               "Format JSON strict: {used_window:{start_date,end_date}, shifted:boolean, note:string, suggestions:[{label, legs:[{competition,event,event_date,market,pick}], odds, rationale, caution}]}",
