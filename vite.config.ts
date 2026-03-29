@@ -5,7 +5,8 @@ import { createRadarAdminRequestHandler } from "./server/radar-admin-handler.mjs
 import { createRadarRequestHandler } from "./server/radar-handler.mjs";
 
 function createRadarProxyPlugin(options: {
-  apiKey: string;
+  groqApiKey: string;
+  anthropicApiKey: string;
   supabaseUrl: string;
   supabaseAnonKey: string;
   supabaseServiceRoleKey: string;
@@ -57,7 +58,8 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       createRadarProxyPlugin({
-        apiKey: env.ANTHROPIC_API_KEY ?? "",
+        groqApiKey: env.GROQ_API_KEY ?? "",
+        anthropicApiKey: env.ANTHROPIC_API_KEY ?? "",
         supabaseUrl: env.SUPABASE_URL ?? env.VITE_SUPABASE_URL ?? "",
         supabaseAnonKey: env.SUPABASE_ANON_KEY ?? env.VITE_SUPABASE_ANON_KEY ?? "",
         supabaseServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY ?? "",

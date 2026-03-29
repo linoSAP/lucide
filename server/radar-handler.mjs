@@ -3,13 +3,16 @@ import { createClient } from "@supabase/supabase-js";
 const RADAR_WEEKLY_LIMIT = 2;
 const MAX_RADAR_BODY_BYTES = 16 * 1024;
 const MAX_RADAR_WINDOW_DAYS = 7;
-const MAX_ANTHROPIC_CONTINUATIONS = 5;
-const MAX_ANTHROPIC_NETWORK_RETRIES = 4;
-const MAX_ANTHROPIC_RATE_LIMIT_RETRIES = 4;
-const MAX_ANTHROPIC_RATE_LIMIT_RETRY_MS = 90000;
-const DEFAULT_ANTHROPIC_NETWORK_RETRY_MS = 2500;
-const DEFAULT_ANTHROPIC_RATE_LIMIT_RETRY_MS = 10000;
-const MAX_ANTHROPIC_TOOL_RETRY_MAX_TOKENS = 1600;
+const RADAR_PROVIDER_GROQ = "groq";
+const RADAR_PROVIDER_ANTHROPIC = "anthropic";
+const GROQ_RADAR_MODEL = "groq/compound";
+const ANTHROPIC_RADAR_MODEL = "claude-sonnet-4-20250514";
+const THESPORTSDB_BASE_URL = "https://www.thesportsdb.com/api/v1/json/123";
+const MAX_STRUCTURED_RADAR_EVENTS = 18;
+const MAX_ANTHROPIC_CONTINUATIONS = 3;
+const MAX_ANTHROPIC_RATE_LIMIT_RETRIES = 1;
+const MAX_ANTHROPIC_RATE_LIMIT_RETRY_MS = 3000;
+const DEFAULT_ANTHROPIC_RATE_LIMIT_RETRY_MS = 1200;
 const allowedRadarSports = new Set(["Football", "Basketball", "Tennis"]);
 const allowedRadarRisks = new Set(["prudent", "balanced", "aggressive"]);
 
@@ -21,22 +24,25 @@ const anthropicSystemPrompt = [
   "Si tu n'es pas raisonnablement sur qu'un evenement est a venir dans la fenetre demandee, tu l'exclus.",
   "Si aucun evenement plausible n'est disponible dans la fenetre demandee, tu peux te decaler legerement vers une fenetre suivante proche.",
   "Tu n'inventes jamais une date, une heure, une competition ou un detail de calendrier.",
+  "Tous les champs de sortie rediges par toi doivent etre en francais naturel, clair et lisible.",
   "Chaque selection doit fournir competition, event et event_date verifiee au format YYYY-MM-DD.",
   "event contient uniquement les deux equipes ou joueurs; la date apparait seulement dans event_date.",
   "Tu refuses toute formulation vague du type match de Premier League, equipe favorite a domicile, match allemand ou affiche a definir.",
-  "Tu diversifies les marches proposes et tu evites de ne proposer que des victoires seches ou des totaux.",
+  "Tu diversifies les marches proposes et tu evites de ne proposer que des victoires seches ou des totaux generiques.",
+  "Tu peux utiliser des marches secondaires mais mainstream si le risque est mieux maitrise: asian handicap, draw no bet, double chance, team totals, first-half lines, set or games handicap.",
+  "Tu choisis le marche le plus judicieux et le plus defendable, pas simplement le plus populaire.",
   "Tu evites les marches obscurs et les player props.",
   "Tu tiens compte de la fenetre de dates demandee quand elle est fournie.",
   "Si tu ne peux pas verifier un evenement a venir avec sa date, tu ne le proposes pas.",
   "Pour un evenement prevu aujourd'hui, tu verifies qu'il n'a pas deja commence; au moindre doute, tu l'exclus.",
   "Une coupe, une competition europeenne, la Champions League, la NBA, l'EuroLeague, un tournoi ATP ou WTA suffisent pleinement; tu n'attends pas une ligue nationale pour proposer un prono.",
   "Un prono simple fiable vaut mieux qu'aucune suggestion quand la date est pauvre.",
-  "Tu restes tres concis: label court, rationale et caution breves, sans texte inutile.",
+  "Le label, le market, le pick, la rationale, la caution et la note doivent rester courts, clairs et faciles a lire en francais.",
   "Tu renvoies un seul objet JSON brut, sans markdown, sans commentaire, sans texte avant ou apres.",
   "Réponds uniquement en JSON.",
 ].join(" ");
 
-const anthropicRadarTools = [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }];
+const anthropicRadarTools = [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }];
 
 const genericEventPatterns = [
   /^match\b/i,
@@ -112,56 +118,6 @@ function createHttpError(statusCode, message) {
 
 function getErrorStatusCode(error) {
   return typeof error?.statusCode === "number" ? error.statusCode : 500;
-}
-
-function getRadarServiceUnavailableMessage() {
-  return "Radar est temporairement indisponible. Reessaie un peu plus tard.";
-}
-
-function getMaskedRadarUpstreamErrorMessage(statusCode, rawMessage) {
-  const normalizedMessage = typeof rawMessage === "string" ? rawMessage.toLowerCase() : "";
-
-  if (
-    normalizedMessage.includes("credit balance is too low") ||
-    normalizedMessage.includes("plans & billing") ||
-    normalizedMessage.includes("purchase credits") ||
-    normalizedMessage.includes("billing")
-  ) {
-    return getRadarServiceUnavailableMessage();
-  }
-
-  if (
-    normalizedMessage.includes("api key") ||
-    normalizedMessage.includes("authentication") ||
-    normalizedMessage.includes("unauthorized") ||
-    normalizedMessage.includes("forbidden")
-  ) {
-    return getRadarServiceUnavailableMessage();
-  }
-
-  if (statusCode >= 400) {
-    return getRadarServiceUnavailableMessage();
-  }
-
-  return "Analyse indisponible pour le moment.";
-}
-
-function getMaskedRadarInternalErrorMessage(error) {
-  const rawMessage = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  const normalizedMessage = rawMessage.toLowerCase();
-
-  if (
-    normalizedMessage.includes("fetch failed") ||
-    normalizedMessage.includes("network") ||
-    normalizedMessage.includes("socket") ||
-    normalizedMessage.includes("econnreset") ||
-    normalizedMessage.includes("etimedout") ||
-    normalizedMessage.includes("timeout")
-  ) {
-    return getRadarServiceUnavailableMessage();
-  }
-
-  return rawMessage || "Erreur interne sur Radar.";
 }
 
 function getDoualaIsoDate(date = new Date()) {
@@ -384,48 +340,8 @@ function buildShiftNote(requestedStartDate, requestedEndDate, nextStartDate, nex
   return `Aucun evenement plausible entre ${requestedStartDate} et ${requestedEndDate}. Radar a glisse vers une fenetre proche, du ${nextStartDate} au ${nextEndDate}.`;
 }
 
-function noteSuggestsConfirmedEventsExist(note) {
-  const normalizedNote = normalizeFreeText(note).toLowerCase();
-
-  if (!normalizedNote) {
-    return false;
-  }
-
-  const mentionsConfirmedEvents =
-    (normalizedNote.includes("confirm") || normalizedNote.includes("verifie")) &&
-    (normalizedNote.includes("match") ||
-      normalizedNote.includes("evenement") ||
-      normalizedNote.includes("champions league") ||
-      normalizedNote.includes("ligue des champions") ||
-      normalizedNote.includes("nba") ||
-      normalizedNote.includes("euroleague") ||
-      normalizedNote.includes("atp") ||
-      normalizedNote.includes("wta") ||
-      normalizedNote.includes("challenger") ||
-      normalizedNote.includes("coupe") ||
-      normalizedNote.includes("tournoi"));
-
-  if (!mentionsConfirmedEvents) {
-    return false;
-  }
-
-  return (
-    normalizedNote.includes("seuls les matchs") ||
-    normalizedNote.includes("seulement") ||
-    normalizedNote.includes("champions league") ||
-    normalizedNote.includes("ligue des champions") ||
-    normalizedNote.includes("nba") ||
-    normalizedNote.includes("euroleague") ||
-    normalizedNote.includes("atp") ||
-    normalizedNote.includes("wta") ||
-    normalizedNote.includes("challenger") ||
-    normalizedNote.includes("coupe") ||
-    normalizedNote.includes("tournoi")
-  );
-}
-
 function buildRadarAttempts(requestedStartDate, requestedEndDate) {
-  return Array.from({ length: 6 }, (_, index) => {
+  return Array.from({ length: 3 }, (_, index) => {
     const offset = index;
     const startDate = addDaysToIsoDate(requestedStartDate, offset);
     const endDate = addDaysToIsoDate(requestedEndDate, offset);
@@ -543,10 +459,6 @@ function buildExplicitNoSuggestionsResult(parsed, requestedStartDate, requestedE
     return null;
   }
 
-  if (noteSuggestsConfirmedEventsExist(parsed?.note)) {
-    return null;
-  }
-
   const payloadWindow = readRadarWindowFromPayload(parsed);
   const startDate = payloadWindow?.startDate ?? fallbackWindow?.startDate ?? requestedStartDate;
   const endDate = payloadWindow?.endDate ?? fallbackWindow?.endDate ?? requestedEndDate;
@@ -627,7 +539,7 @@ function normalizeRadarResult(parsed, requestedStartDate, requestedEndDate, toda
       };
     })
     .filter(Boolean)
-    .slice(0, 4);
+    .slice(0, 3);
 
   if (!suggestions.length) {
     const explicitNoSuggestionsResult = buildExplicitNoSuggestionsResult(
@@ -670,18 +582,30 @@ function isIsoDateInput(value) {
 
 function getMarketGuideForSport(sport) {
   if (sport === "Football") {
-    return "Marches a privilegier: double chance, draw no bet, under/over buts, both teams to score, handicap prudent, team total.";
+    return "Prefer markets such as double chance, draw no bet, asian handicap, under or over goals, both teams to score when justified, team totals, first-half lines, or clean lower-variance alternatives when they offer a clearer edge than 1X2.";
   }
 
   if (sport === "Basketball") {
-    return "Marches a privilegier: handicap/spread, moneyline, total points match, total equipe, resultat mi-temps avec moderation.";
+    return "Prefer markets such as spread, alternate spread, moneyline only when truly justified, match total, team total, first-half spread, first-half total, or lower-volatility team angles instead of forcing a straight winner.";
   }
 
   if (sport === "Tennis") {
-    return "Marches a privilegier: vainqueur du match, vainqueur du premier set, handicap jeux, total jeux, handicap sets.";
+    return "Prefer markets such as match winner, first set winner, games handicap, sets handicap, total games, player to win a set, or safer set or game angles when they are more defensible than a raw favorite pick.";
   }
 
-  return "Varie les marches de maniere prudente.";
+  return "Vary the markets prudently and prefer the most defensible angle rather than the most popular one.";
+}
+
+function getRiskGuideForRadar(risk) {
+  if (risk === "prudent") {
+    return "Prudent profile: prefer lower-variance markets, safer lines, and avoid thin edges or heavily correlated legs.";
+  }
+
+  if (risk === "aggressive") {
+    return "Aggressive profile: you may take stronger lines or more assertive angles, but they must still be evidence-based and not speculative.";
+  }
+
+  return "Balanced profile: mix solid mainstream markets with selective secondary angles when they clearly improve the risk-reward profile.";
 }
 
 function getSearchFocusForSport(sport) {
@@ -694,10 +618,134 @@ function getSearchFocusForSport(sport) {
   }
 
   if (sport === "Tennis") {
-    return "Priorite aux matchs ATP, WTA et Challenger avec ordre de jeu ou calendrier officiel clairement publie; propose seulement des affiches singles dont la date est verifiee.";
+    return "Priorite aux matchs ATP, WTA, Challenger et grandes competitions ITF avec ordre de jeu ou calendrier officiel clairement publie; si un match confirme existe, propose au moins un single plutot que rien.";
   }
 
   return "Priorite aux competitions avec calendrier public fiable.";
+}
+
+function getStructuredSportName(sport) {
+  if (sport === "Football") {
+    return "Soccer";
+  }
+
+  if (sport === "Basketball") {
+    return "Basketball";
+  }
+
+  if (sport === "Tennis") {
+    return "Tennis";
+  }
+
+  return sport;
+}
+
+function isFinishedStructuredEvent(event, todayIso) {
+  const status = normalizeFreeText(event?.strStatus).toLowerCase();
+  const eventDate = readDateField(event?.dateEventLocal) || readDateField(event?.dateEvent) || "";
+
+  if (!eventDate) {
+    return true;
+  }
+
+  if (eventDate < todayIso) {
+    return true;
+  }
+
+  if (
+    status.includes("ft") ||
+    status.includes("finished") ||
+    status.includes("match finished") ||
+    status.includes("after extra") ||
+    status.includes("aot") ||
+    status.includes("cancel") ||
+    status.includes("abandon") ||
+    status.includes("walkover")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function normalizeStructuredRadarEvent(event) {
+  const competition = normalizeFreeText(event?.strLeague);
+  const eventLabel = normalizeFreeText(event?.strEvent);
+  const eventDate = readDateField(event?.dateEventLocal) || readDateField(event?.dateEvent);
+  const status = normalizeFreeText(event?.strStatus);
+  const country = normalizeFreeText(event?.strCountry);
+
+  if (!competition || !eventLabel || !eventDate) {
+    return null;
+  }
+
+  return {
+    competition,
+    event: eventLabel,
+    event_date: eventDate,
+    status: status || "Not Started",
+    country,
+  };
+}
+
+async function fetchStructuredRadarEventsForDay(sport, date) {
+  const structuredSportName = encodeURIComponent(getStructuredSportName(sport));
+  const url = `${THESPORTSDB_BASE_URL}/eventsday.php?d=${encodeURIComponent(date)}&s=${structuredSportName}`;
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error("Structured sports schedule request failed.");
+  }
+
+  const payload = await response.json().catch(() => null);
+  return Array.isArray(payload?.events) ? payload.events : [];
+}
+
+async function fetchStructuredRadarEventsForWindow(sport, startDate, endDate, todayIso) {
+  const requestedDayCount = countDaysInWindow(startDate, endDate);
+
+  if (!Number.isFinite(requestedDayCount) || requestedDayCount < 1) {
+    return [];
+  }
+
+  const eventsBySignature = new Map();
+
+  for (let dayOffset = 0; dayOffset < requestedDayCount; dayOffset += 1) {
+    const currentDay = addDaysToIsoDate(startDate, dayOffset);
+    const events = await fetchStructuredRadarEventsForDay(sport, currentDay).catch(() => []);
+
+    for (const event of events) {
+      if (isFinishedStructuredEvent(event, todayIso)) {
+        continue;
+      }
+
+      const normalizedEvent = normalizeStructuredRadarEvent(event);
+
+      if (!normalizedEvent) {
+        continue;
+      }
+
+      const signature = `${normalizedEvent.competition}|${normalizedEvent.event}|${normalizedEvent.event_date}`;
+
+      if (!eventsBySignature.has(signature)) {
+        eventsBySignature.set(signature, normalizedEvent);
+      }
+    }
+  }
+
+  return Array.from(eventsBySignature.values()).slice(0, MAX_STRUCTURED_RADAR_EVENTS);
+}
+
+function buildStructuredEventsPrompt(events) {
+  if (!Array.isArray(events) || !events.length) {
+    return "Aucune fixture structuree exploitable n'a ete trouvee dans la fenetre; tu peux alors t'appuyer sur la recherche web.";
+  }
+
+  return [
+    "Voici une liste de fixtures structurees deja trouvees pour cette fenetre.",
+    "Priorite absolue a ces evenements: ne propose en premier lieu que des selections issues de cette liste et n'invente aucun autre match si cette liste suffit.",
+    JSON.stringify(events),
+  ].join(" ");
 }
 
 function readRequestBody(request, maxBytes = MAX_RADAR_BODY_BYTES) {
@@ -721,35 +769,128 @@ function readRequestBody(request, maxBytes = MAX_RADAR_BODY_BYTES) {
   });
 }
 
+function getRadarServiceUnavailableMessage() {
+  return "Radar est temporairement indisponible. Reessaie un peu plus tard.";
+}
+
+function resolveRadarProvider({ groqApiKey, anthropicApiKey }) {
+  if (groqApiKey) {
+    return { name: RADAR_PROVIDER_GROQ, apiKey: groqApiKey };
+  }
+
+  if (anthropicApiKey) {
+    return { name: RADAR_PROVIDER_ANTHROPIC, apiKey: anthropicApiKey };
+  }
+
+  return null;
+}
+
+function normalizeGroqMessageText(content) {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return content
+    .map((entry) => {
+      if (typeof entry === "string") {
+        return entry;
+      }
+
+      if (typeof entry?.text === "string") {
+        return entry.text;
+      }
+
+      if (typeof entry?.content === "string") {
+        return entry.content;
+      }
+
+      return "";
+    })
+    .join("\n")
+    .trim();
+}
+
+async function requestGroqRadar(apiKey, payload) {
+  let groqResponse = null;
+  let groqPayload = null;
+
+  for (let rateLimitRetryIndex = 0; rateLimitRetryIndex <= MAX_ANTHROPIC_RATE_LIMIT_RETRIES; rateLimitRetryIndex += 1) {
+    groqResponse = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+        "Groq-Model-Version": "latest",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    groqPayload = await groqResponse.json().catch(() => null);
+
+    if (groqResponse.ok) {
+      break;
+    }
+
+    if (groqResponse.status !== 429) {
+      const errorMessage =
+        typeof groqPayload?.error?.message === "string"
+          ? groqPayload.error.message
+          : "La requête Radar a échoué.";
+      throw new Error(errorMessage);
+    }
+
+    const retryAfterSeconds = parseRetryAfterSeconds(groqResponse.headers.get("retry-after"));
+    const retryDelayMs = Math.max(
+      250,
+      retryAfterSeconds !== null ? retryAfterSeconds * 1000 : DEFAULT_ANTHROPIC_RATE_LIMIT_RETRY_MS,
+    );
+
+    if (
+      rateLimitRetryIndex < MAX_ANTHROPIC_RATE_LIMIT_RETRIES &&
+      retryDelayMs <= MAX_ANTHROPIC_RATE_LIMIT_RETRY_MS
+    ) {
+      await wait(retryDelayMs);
+      continue;
+    }
+
+    throw new Error(getRadarServiceUnavailableMessage());
+  }
+
+  if (!groqResponse?.ok) {
+    throw new Error("La requête Radar a échoué.");
+  }
+
+  const choice = Array.isArray(groqPayload?.choices) ? groqPayload.choices[0] : null;
+  const messageText = normalizeGroqMessageText(choice?.message?.content);
+
+  return {
+    ...groqPayload,
+    stop_reason: typeof choice?.finish_reason === "string" ? choice.finish_reason : "stop",
+    content: messageText ? [{ type: "text", text: messageText }] : [],
+  };
+}
+
 async function requestAnthropicRadar(apiKey, payload) {
   let requestPayload = { ...payload };
-  const accumulatedContent = [];
-  let didRetryToolUseAfterMaxTokens = false;
 
   for (let continuationIndex = 0; continuationIndex < MAX_ANTHROPIC_CONTINUATIONS; continuationIndex += 1) {
     let anthropicResponse = null;
     let anthropicPayload = null;
 
     for (let rateLimitRetryIndex = 0; rateLimitRetryIndex <= MAX_ANTHROPIC_RATE_LIMIT_RETRIES; rateLimitRetryIndex += 1) {
-      try {
-        anthropicResponse = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "anthropic-version": "2023-06-01",
-            "x-api-key": apiKey,
-          },
-          body: JSON.stringify(requestPayload),
-        });
-      } catch (error) {
-        if (rateLimitRetryIndex < MAX_ANTHROPIC_NETWORK_RETRIES) {
-          await wait(DEFAULT_ANTHROPIC_NETWORK_RETRY_MS * (rateLimitRetryIndex + 1));
-          continue;
-        }
-
-        console.error("[radar] Upstream network failure.", error);
-        throw new Error(getRadarServiceUnavailableMessage());
-      }
+      anthropicResponse = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "anthropic-version": "2023-06-01",
+          "x-api-key": apiKey,
+        },
+        body: JSON.stringify(requestPayload),
+      });
 
       anthropicPayload = await anthropicResponse.json().catch(() => null);
 
@@ -758,12 +899,11 @@ async function requestAnthropicRadar(apiKey, payload) {
       }
 
       if (anthropicResponse.status !== 429) {
-        const rawErrorMessage =
+        const errorMessage =
           typeof anthropicPayload?.error?.message === "string"
             ? anthropicPayload.error.message
-            : "";
-        console.error("[radar] Upstream provider error.", anthropicResponse.status, rawErrorMessage || "<empty>");
-        throw new Error(getMaskedRadarUpstreamErrorMessage(anthropicResponse.status, rawErrorMessage));
+            : "La requête Radar a échoué.";
+        throw new Error(errorMessage);
       }
 
       const retryAfterSeconds = parseRetryAfterSeconds(anthropicResponse.headers.get("retry-after"));
@@ -780,78 +920,70 @@ async function requestAnthropicRadar(apiKey, payload) {
         continue;
       }
 
-      console.error(
-        "[radar] Upstream provider rate limit exhausted.",
-        retryAfterSeconds !== null ? `retry-after=${retryAfterSeconds}s` : "retry-after=<missing>",
-      );
-      throw new Error(getRadarServiceUnavailableMessage());
+      if (retryAfterSeconds !== null && retryAfterSeconds > 0) {
+        throw new Error(`Quota Radar temporairement atteint. Reessaie dans ${retryAfterSeconds} s.`);
+      }
+
+      throw new Error("Quota Radar temporairement atteint. Attends environ 1 minute puis relance.");
     }
 
     if (!anthropicResponse?.ok) {
       throw new Error("La requête Radar a échoué.");
     }
 
-    if (!Array.isArray(anthropicPayload?.content)) {
+    if (anthropicPayload?.stop_reason !== "pause_turn" || !Array.isArray(anthropicPayload?.content)) {
       return anthropicPayload;
     }
 
-    accumulatedContent.push(...anthropicPayload.content);
+    const previousMessages = Array.isArray(requestPayload.messages) ? requestPayload.messages : [];
 
-    if (anthropicPayload?.stop_reason === "pause_turn") {
-      const previousMessages = Array.isArray(requestPayload.messages) ? requestPayload.messages : [];
-
-      requestPayload = {
-        ...requestPayload,
-        messages: [
-          ...previousMessages,
-          {
-            role: "assistant",
-            content: anthropicPayload.content,
-          },
-        ],
-      };
-      continue;
-    }
-
-    if (anthropicPayload?.stop_reason === "max_tokens") {
-      const lastContentBlock = anthropicPayload.content[anthropicPayload.content.length - 1] ?? null;
-
-      if (lastContentBlock?.type === "tool_use" && !didRetryToolUseAfterMaxTokens) {
-        didRetryToolUseAfterMaxTokens = true;
-        accumulatedContent.length = 0;
-        requestPayload = {
-          ...payload,
-          max_tokens: Math.max(Number(payload?.max_tokens ?? 0), MAX_ANTHROPIC_TOOL_RETRY_MAX_TOKENS),
-        };
-        continue;
-      }
-
-      const previousMessages = Array.isArray(requestPayload.messages) ? requestPayload.messages : [];
-
-      requestPayload = {
-        ...requestPayload,
-        messages: [
-          ...previousMessages,
-          {
-            role: "assistant",
-            content: anthropicPayload.content,
-          },
-          {
-            role: "user",
-            content: "Continue uniquement le JSON Radar en cours, sans recommencer, sans markdown et sans texte hors JSON.",
-          },
-        ],
-      };
-      continue;
-    }
-
-    return {
-      ...anthropicPayload,
-      content: accumulatedContent,
+    requestPayload = {
+      ...requestPayload,
+      messages: [
+        ...previousMessages,
+        {
+          role: "assistant",
+          content: anthropicPayload.content,
+        },
+      ],
     };
   }
 
-  throw new Error("La reponse Radar a ete coupee trop tot. Relance l'analyse.");
+  throw new Error("La recherche Radar a pris trop de tours.");
+}
+
+async function requestRadarProvider(provider, { systemPrompt, userPrompt, maxTokens, temperature }) {
+  if (provider?.name === RADAR_PROVIDER_GROQ) {
+    return requestGroqRadar(provider.apiKey, {
+      model: GROQ_RADAR_MODEL,
+      max_completion_tokens: maxTokens,
+      temperature,
+      response_format: { type: "json_object" },
+      compound_custom: {
+        tools: {
+          enabled_tools: ["web_search", "visit_website"],
+        },
+      },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    });
+  }
+
+  return requestAnthropicRadar(provider.apiKey, {
+    model: ANTHROPIC_RADAR_MODEL,
+    max_tokens: maxTokens,
+    temperature,
+    system: systemPrompt,
+    tools: anthropicRadarTools,
+    messages: [
+      {
+        role: "user",
+        content: userPrompt,
+      },
+    ],
+  });
 }
 
 function createServerSupabaseClient(supabaseUrl, supabaseAnonKey, accessToken) {
@@ -902,8 +1034,7 @@ function getBearerToken(headers) {
 
 async function authenticateRadarUser(headers, supabaseUrl, supabaseAnonKey) {
   if (!supabaseUrl || !supabaseAnonKey) {
-    console.error("[radar] Missing server auth configuration for secured Radar requests.");
-    throw createHttpError(500, getRadarServiceUnavailableMessage());
+    throw createHttpError(500, "Supabase serveur manquant pour securiser Radar.");
   }
 
   const accessToken = getBearerToken(headers);
@@ -942,14 +1073,13 @@ async function claimServerRadarUsage(client, usedOn) {
   const { data, error } = await client.rpc("claim_radar_access", { target_day: usedOn });
 
   if (error) {
-    console.error("[radar] Unable to claim radar usage.", error.message);
-    throw createHttpError(500, getRadarServiceUnavailableMessage());
+    throw createHttpError(500, "Applique le schema Supabase complet pour activer les quotas et jetons Radar.");
   }
 
   const payload = Array.isArray(data) ? data[0] : data;
 
   if (!payload) {
-    throw createHttpError(500, getRadarServiceUnavailableMessage());
+    throw createHttpError(500, "Impossible de verifier le quota Radar de la semaine.");
   }
 
   return {
@@ -995,7 +1125,8 @@ function getPathnameFromUrl(requestUrl) {
 }
 
 async function processRadarHttpRequest({
-  apiKey,
+  groqApiKey,
+  anthropicApiKey,
   supabaseUrl,
   supabaseAnonKey,
   requestMethod,
@@ -1009,12 +1140,13 @@ async function processRadarHttpRequest({
     return null;
   }
 
-  if (!apiKey) {
-    console.error("[radar] Missing provider API key.");
+  const provider = resolveRadarProvider({ groqApiKey, anthropicApiKey });
+
+  if (!provider) {
     return {
       status: 500,
       payload: {
-        error: getRadarServiceUnavailableMessage(),
+        error: "Ajoute GROQ_API_KEY dans ton .env pour activer Radar.",
       },
     };
   }
@@ -1090,6 +1222,7 @@ async function processRadarHttpRequest({
       ? `Contexte historique utilisateur: ${historySummary}.`
       : "Contexte historique utilisateur: aucun historique exploitable pour le moment.";
     const marketGuide = getMarketGuideForSport(sport);
+    const riskGuide = getRiskGuideForRadar(risk);
     const searchFocus = getSearchFocusForSport(sport);
     const attempts = buildRadarAttempts(effectiveStartDate, effectiveEndDate);
     let lastNoUsableSuggestions = false;
@@ -1102,52 +1235,58 @@ async function processRadarHttpRequest({
       const fallbackContext = attempt.shifted
         ? `Fenetre de repli automatique autorisee: du ${attempt.startDate} au ${attempt.endDate}. Garde cette fenetre proche et signale clairement ce decalage.`
         : "Reste prioritairement dans la fenetre demandee.";
+      const structuredEvents = await fetchStructuredRadarEventsForWindow(
+        sport,
+        attempt.startDate,
+        attempt.endDate,
+        todayIso,
+      );
+      const structuredEventsPrompt = buildStructuredEventsPrompt(structuredEvents);
 
-      const anthropicPayload = await requestAnthropicRadar(apiKey, {
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1200,
+      const userPrompt = [
+        `Sport: ${sport}.`,
+        `Risque: ${risk}.`,
+        currentDateContext,
+        dateContext,
+        fallbackContext,
+        historyContext,
+        marketGuide,
+        riskGuide,
+        searchFocus,
+        structuredEventsPrompt,
+        "Tu peux retourner de 0 a 4 suggestions realistes avec 1 a 3 selections maximum par suggestion.",
+        "Ne cite jamais un match deja joue, une finale historique ou un tournoi termine.",
+        "Une competition de coupe ou de tournoi compte pleinement: tu ne te limites jamais aux ligues nationales.",
+        `Aucune selection ne doit avoir un event_date en dehors de la fenetre ${attempt.startDate} -> ${attempt.endDate} ni avant ${todayIso}.`,
+        "Si tu n'es pas sur qu'un evenement est a venir dans la fenetre demandee, tu l'exclus au lieu de deviner.",
+        "Si aucun evenement plausible n'existe dans la fenetre demandee, tu peux te decaler vers la prochaine fenetre utile, au maximum 3 jours apres la fin demandee.",
+        "N'ecris jamais d'heure exacte.",
+        "Pour un evenement qui tombe aujourd'hui, verifie aussi qu'il est encore a venir; s'il y a un doute sur l'horaire ou le statut, exclue-le.",
+        "Chaque leg doit contenir competition, event, event_date, market et pick. competition = tournoi ou championnat. event = les deux equipes ou joueurs seulement. event_date = YYYY-MM-DD verifie.",
+        "Redige label, market, pick, rationale, caution et note uniquement en francais.",
+        "Si la date d'un evenement n'est pas clairement verifiee, exclue cet evenement.",
+        "Diversifie les marches sur les suggestions quand c'est plausible.",
+        "Evite de reutiliser les memes affiches sauf si c'est vraiment incontournable.",
+        "N'abuse pas des vainqueurs secs, des moneylines ou des overs generiques si un meilleur marche existe sur le meme evenement.",
+        "Utilise des marches secondaires mais mainstream lorsqu'ils offrent une option plus judicieuse que le choix public le plus evident.",
+        "Si au moins un match confirme existe dans la fenetre, meme s'il s'agit seulement d'un tournoi ATP, WTA ou Challenger, propose au moins une suggestion a partir de lui.",
+        "Si seuls un ou deux evenements solides existent, propose quand meme un single ou une suggestion courte plutot que suggestions: [].",
+        "Si tu ne peux pas produire une suggestion plausible sans halluciner, retourne suggestions: [].",
+        "Pour chaque suggestion, retourne un label court et lisible en francais, les selections, la cote estimee, une rationale concise en francais et une vigilance concise en francais.",
+        "La reponse doit etre un seul objet JSON brut, sans balise markdown et sans phrase d'introduction ou de conclusion.",
+        "Si la fenetre est decalee, tu dois le signaler clairement dans note et used_window.",
+        "Format JSON strict: {used_window:{start_date,end_date}, shifted:boolean, note:string, suggestions:[{label, legs:[{competition,event,event_date,market,pick}], odds, rationale, caution}]}",
+      ].join(" ");
+
+      const providerPayload = await requestRadarProvider(provider, {
+        systemPrompt: anthropicSystemPrompt,
+        userPrompt,
+        maxTokens: 620,
         temperature: 0.2,
-        system: anthropicSystemPrompt,
-        tools: anthropicRadarTools,
-        messages: [
-          {
-            role: "user",
-            content: [
-              `Sport: ${sport}.`,
-              `Risque: ${risk}.`,
-              currentDateContext,
-              dateContext,
-              fallbackContext,
-              historyContext,
-              marketGuide,
-              searchFocus,
-              "Tu peux retourner de 0 a 4 suggestions realistes avec 1 a 3 selections maximum par suggestion.",
-              "Ne cite jamais un match deja joue, une finale historique ou un tournoi termine.",
-              "Une competition de coupe ou de tournoi compte pleinement: tu ne te limites jamais aux ligues nationales.",
-              `Aucune selection ne doit avoir un event_date en dehors de la fenetre ${attempt.startDate} -> ${attempt.endDate} ni avant ${todayIso}.`,
-              "Si tu n'es pas sur qu'un evenement est a venir dans la fenetre demandee, tu l'exclus au lieu de deviner.",
-              "Si aucun evenement plausible n'existe dans la fenetre demandee, tu peux te decaler vers la prochaine fenetre utile, au maximum 3 jours apres la fin demandee.",
-              "N'ecris jamais d'heure exacte.",
-              "Pour un evenement qui tombe aujourd'hui, verifie aussi qu'il est encore a venir; s'il y a un doute sur l'horaire ou le statut, exclue-le.",
-              "Chaque leg doit contenir competition, event, event_date, market et pick. competition = tournoi ou championnat. event = les deux equipes ou joueurs seulement. event_date = YYYY-MM-DD verifie.",
-              "Si la date d'un evenement n'est pas clairement verifiee, exclue cet evenement.",
-              "Diversifie les marches sur les suggestions quand c'est plausible.",
-              "Evite de reutiliser les memes affiches sauf si c'est vraiment incontournable.",
-              "N'abuse pas des simples vainqueurs et n'abuse pas des overs/unders.",
-              "Si au moins un match confirme existe dans la fenetre, meme s'il s'agit seulement de Champions League, de coupe ou de tournoi, propose au moins une suggestion a partir de lui.",
-              "Si seuls un ou deux evenements solides existent, propose quand meme un single ou une suggestion courte plutot que suggestions: [].",
-              "Si tu ne peux vraiment pas produire une suggestion plausible sans halluciner, retourne suggestions: [].",
-              "Pour chaque suggestion, retourne un label court, les selections, la cote estimee, une logique concise et un point de vigilance concis.",
-              "La reponse doit etre un seul objet JSON brut, sans balise markdown et sans phrase d'introduction ou de conclusion.",
-              "Si la fenetre est decalee, tu dois le signaler clairement dans note et used_window.",
-              "Format JSON strict: {used_window:{start_date,end_date}, shifted:boolean, note:string, suggestions:[{label, legs:[{competition,event,event_date,market,pick}], odds, rationale, caution}]}",
-            ].join(" "),
-          },
-        ],
       });
 
       try {
-        const parsedRadarPayload = extractRadarJsonPayload(anthropicPayload);
+        const parsedRadarPayload = extractRadarJsonPayload(providerPayload);
         const result = normalizeRadarResult(
           parsedRadarPayload,
           attempt.startDate,
@@ -1200,15 +1339,16 @@ async function processRadarHttpRequest({
       }
     }
 
-    const message = getMaskedRadarInternalErrorMessage(error);
+    const message = error instanceof Error ? error.message : "Erreur interne sur Radar.";
     return { status: getErrorStatusCode(error), payload: { error: message } };
   }
 }
 
-export function createRadarRequestHandler({ apiKey, supabaseUrl, supabaseAnonKey }) {
+export function createRadarRequestHandler({ groqApiKey, anthropicApiKey, supabaseUrl, supabaseAnonKey }) {
   return async function handleRadarRequest(request, response) {
     const result = await processRadarHttpRequest({
-      apiKey,
+      groqApiKey,
+      anthropicApiKey,
       supabaseUrl,
       supabaseAnonKey,
       requestMethod: request.method,

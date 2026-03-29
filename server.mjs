@@ -28,7 +28,8 @@ loadLocalEnv(envFilePath);
 const port = Number.parseInt(process.env.PORT ?? "4173", 10);
 
 const handleRadarRequest = createRadarRequestHandler({
-  apiKey: process.env.ANTHROPIC_API_KEY ?? "",
+  groqApiKey: process.env.GROQ_API_KEY ?? "",
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
   supabaseUrl: process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? "",
   supabaseAnonKey: process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY ?? "",
 });

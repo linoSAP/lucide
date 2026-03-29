@@ -93,19 +93,20 @@ function createRadarProxyPlugin(options) {
     };
 }
 export default defineConfig(function (_a) {
-    var _b, _c, _d, _e, _f, _g, _h, _j;
+    var _b, _c, _d, _e, _f, _g, _h, _j, _k;
     var mode = _a.mode;
     var env = loadEnv(mode, process.cwd(), "");
     return {
         plugins: [
             react(),
             createRadarProxyPlugin({
-                apiKey: (_b = env.ANTHROPIC_API_KEY) !== null && _b !== void 0 ? _b : "",
-                supabaseUrl: (_d = (_c = env.SUPABASE_URL) !== null && _c !== void 0 ? _c : env.VITE_SUPABASE_URL) !== null && _d !== void 0 ? _d : "",
-                supabaseAnonKey: (_f = (_e = env.SUPABASE_ANON_KEY) !== null && _e !== void 0 ? _e : env.VITE_SUPABASE_ANON_KEY) !== null && _f !== void 0 ? _f : "",
-                supabaseServiceRoleKey: (_g = env.SUPABASE_SERVICE_ROLE_KEY) !== null && _g !== void 0 ? _g : "",
-                adminPassword: (_h = env.RADAR_ADMIN_PASSWORD) !== null && _h !== void 0 ? _h : "",
-                adminSessionSecret: (_j = env.RADAR_ADMIN_SESSION_SECRET) !== null && _j !== void 0 ? _j : "",
+                groqApiKey: (_b = env.GROQ_API_KEY) !== null && _b !== void 0 ? _b : "",
+                anthropicApiKey: (_c = env.ANTHROPIC_API_KEY) !== null && _c !== void 0 ? _c : "",
+                supabaseUrl: (_e = (_d = env.SUPABASE_URL) !== null && _d !== void 0 ? _d : env.VITE_SUPABASE_URL) !== null && _e !== void 0 ? _e : "",
+                supabaseAnonKey: (_g = (_f = env.SUPABASE_ANON_KEY) !== null && _f !== void 0 ? _f : env.VITE_SUPABASE_ANON_KEY) !== null && _g !== void 0 ? _g : "",
+                supabaseServiceRoleKey: (_h = env.SUPABASE_SERVICE_ROLE_KEY) !== null && _h !== void 0 ? _h : "",
+                adminPassword: (_j = env.RADAR_ADMIN_PASSWORD) !== null && _j !== void 0 ? _j : "",
+                adminSessionSecret: (_k = env.RADAR_ADMIN_SESSION_SECRET) !== null && _k !== void 0 ? _k : "",
             }),
         ],
         resolve: {
