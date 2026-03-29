@@ -3,13 +3,13 @@ import { createClient } from "@supabase/supabase-js";
 const RADAR_WEEKLY_LIMIT = 2;
 const MAX_RADAR_BODY_BYTES = 16 * 1024;
 const MAX_RADAR_WINDOW_DAYS = 7;
-const MAX_ANTHROPIC_CONTINUATIONS = 3;
-const MAX_ANTHROPIC_NETWORK_RETRIES = 2;
-const MAX_ANTHROPIC_RATE_LIMIT_RETRIES = 2;
-const MAX_ANTHROPIC_RATE_LIMIT_RETRY_MS = 15000;
-const DEFAULT_ANTHROPIC_NETWORK_RETRY_MS = 1500;
-const DEFAULT_ANTHROPIC_RATE_LIMIT_RETRY_MS = 4000;
-const MAX_ANTHROPIC_TOOL_RETRY_MAX_TOKENS = 900;
+const MAX_ANTHROPIC_CONTINUATIONS = 5;
+const MAX_ANTHROPIC_NETWORK_RETRIES = 4;
+const MAX_ANTHROPIC_RATE_LIMIT_RETRIES = 4;
+const MAX_ANTHROPIC_RATE_LIMIT_RETRY_MS = 90000;
+const DEFAULT_ANTHROPIC_NETWORK_RETRY_MS = 2500;
+const DEFAULT_ANTHROPIC_RATE_LIMIT_RETRY_MS = 10000;
+const MAX_ANTHROPIC_TOOL_RETRY_MAX_TOKENS = 1600;
 const allowedRadarSports = new Set(["Football", "Basketball", "Tennis"]);
 const allowedRadarRisks = new Set(["prudent", "balanced", "aggressive"]);
 
@@ -34,7 +34,7 @@ const anthropicSystemPrompt = [
   "Réponds uniquement en JSON.",
 ].join(" ");
 
-const anthropicRadarTools = [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }];
+const anthropicRadarTools = [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }];
 
 const genericEventPatterns = [
   /^match\b/i,
@@ -383,7 +383,7 @@ function buildShiftNote(requestedStartDate, requestedEndDate, nextStartDate, nex
 }
 
 function buildRadarAttempts(requestedStartDate, requestedEndDate) {
-  return Array.from({ length: 4 }, (_, index) => {
+  return Array.from({ length: 6 }, (_, index) => {
     const offset = index;
     const startDate = addDaysToIsoDate(requestedStartDate, offset);
     const endDate = addDaysToIsoDate(requestedEndDate, offset);
@@ -581,7 +581,7 @@ function normalizeRadarResult(parsed, requestedStartDate, requestedEndDate, toda
       };
     })
     .filter(Boolean)
-    .slice(0, 3);
+    .slice(0, 4);
 
   if (!suggestions.length) {
     const explicitNoSuggestionsResult = buildExplicitNoSuggestionsResult(
@@ -734,11 +734,11 @@ async function requestAnthropicRadar(apiKey, payload) {
         continue;
       }
 
-      if (retryAfterSeconds !== null && retryAfterSeconds > 0) {
-        throw new Error(`Quota Radar temporairement atteint. Reessaie dans ${retryAfterSeconds} s.`);
-      }
-
-      throw new Error("Quota Radar temporairement atteint. Attends environ 1 minute puis relance.");
+      console.error(
+        "[radar] Upstream provider rate limit exhausted.",
+        retryAfterSeconds !== null ? `retry-after=${retryAfterSeconds}s` : "retry-after=<missing>",
+      );
+      throw new Error(getRadarServiceUnavailableMessage());
     }
 
     if (!anthropicResponse?.ok) {
@@ -1059,7 +1059,7 @@ async function processRadarHttpRequest({
 
       const anthropicPayload = await requestAnthropicRadar(apiKey, {
         model: "claude-sonnet-4-20250514",
-        max_tokens: 700,
+        max_tokens: 1200,
         temperature: 0.2,
         system: anthropicSystemPrompt,
         tools: anthropicRadarTools,
@@ -1075,7 +1075,7 @@ async function processRadarHttpRequest({
               historyContext,
               marketGuide,
               searchFocus,
-              "Tu peux retourner de 0 a 3 combines realistes avec 2 a 3 selections maximum par combine.",
+              "Tu peux retourner de 0 a 4 combines realistes avec 2 a 3 selections maximum par combine.",
               "Ne cite jamais un match deja joue, une finale historique ou un tournoi termine.",
               `Aucune selection ne doit avoir un event_date en dehors de la fenetre ${attempt.startDate} -> ${attempt.endDate} ni avant ${todayIso}.`,
               "Si tu n'es pas sur qu'un evenement est a venir dans la fenetre demandee, tu l'exclus au lieu de deviner.",

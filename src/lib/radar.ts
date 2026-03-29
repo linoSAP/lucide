@@ -3,7 +3,7 @@ import type { RadarAccessMode } from "@/types/supabase";
 
 export const radarSports = ["Football", "Basketball", "Tennis"] as const;
 export const RADAR_WEEKLY_LIMIT = 2;
-const RADAR_REQUEST_TIMEOUT_MS = 75000;
+const RADAR_REQUEST_TIMEOUT_MS = 240000;
 const radarUsageStoragePrefix = "lucide:radar-usage";
 const doualaDateFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Africa/Douala",
