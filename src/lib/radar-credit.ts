@@ -68,7 +68,7 @@ export function buildRadarPaymentHref(paymentMethod: RadarPaymentMethod, amountF
   }
 
   if (paymentMethod === "mobile_money") {
-    return buildDialHref(`*126*1*1*${radarPaymentRecipients.mobile_money}*${safeAmount}#`);
+    return buildDialHref(`*126*9*${radarPaymentRecipients.mobile_money}*${safeAmount}#`);
   }
 
   return "";
