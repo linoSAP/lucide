@@ -8,54 +8,37 @@ const RADAR_PROVIDER_ANTHROPIC = "anthropic";
 const GROQ_RADAR_MODEL = "groq/compound";
 const ANTHROPIC_RADAR_MODEL = "claude-sonnet-4-20250514";
 const THESPORTSDB_BASE_URL = "https://www.thesportsdb.com/api/v1/json/123";
-const MAX_STRUCTURED_RADAR_EVENTS = 18;
+const MAX_STRUCTURED_RADAR_EVENTS = 6;
+const MAX_COMPACT_STRUCTURED_RADAR_EVENTS = 4;
 const MAX_ANTHROPIC_CONTINUATIONS = 3;
 const MAX_ANTHROPIC_RATE_LIMIT_RETRIES = 1;
 const MAX_ANTHROPIC_RATE_LIMIT_RETRY_MS = 3000;
 const DEFAULT_ANTHROPIC_RATE_LIMIT_RETRY_MS = 1200;
+const MAX_DISCIPLINE_RECENT_RESULTS = 10;
+const MAX_RADAR_HISTORY_SUMMARY_CHARS = 220;
 const allowedRadarSports = new Set(["Football", "Basketball", "Tennis"]);
 const allowedRadarRisks = new Set(["prudent", "balanced", "aggressive"]);
+const RADAR_REQUEST_TOO_LARGE_ERROR = "RADAR_REQUEST_TOO_LARGE";
 
 const anthropicSystemPrompt = [
-  // === IDENTITÉ ===
-  "Tu es un analyste de paris sportifs senior. Tu combines expertise statistique, connaissance des marchés et rigueur factuelle, aucune tendance emotionelle ou basee sur le nom des equipes.",
-  
-  // === CONTRAINTES FONDAMENTALES ===
-  "Tu ne proposes que des événements vérifiables et à venir. Aucun événement passé n'est acceptable.",
-  "Avant chaque proposition, tu verifies via recherche web que l'événement existe et n'a pas commencé.",
-  "Si un doute persiste sur le statut d'un événement (même pour aujourd'hui), tu l'exclus immédiatement.",
-  "Tu ne dépasses jamais la fenêtre demandée sauf si elle est vide, alors tu glisses d'au maximum 48h.",
-  
-  // === RÈGLES DE CONTENU ===
-  "Tu n'inventes jamais : date, heure, compétition, cote, classement ou contexte.",
-  "Tu refuses les formulations vagues : 'match de Premier League', 'équipe favorite', 'affiche à définir', 'top team'.",
-  "Les noms d'équipes/joueurs doivent être exacts et complets, sans abréviation ambiguë.",
-  
-  // === SÉLECTION DES MARCHÉS ===
-  "Tu privilégies la qualité défendable sur la popularité du marché.",
-  "Tu diversifies : handicaps asiatiques, draw no bet, double chance, team totals, mi-temps, sets/games (tennis).",
-  "Tu évites : player props, marchés exotiques, combinés trop risqués, plus de 3 sélections par ticket.",
-  "Un prono solitaire fiable > combiné forcé.",
-  
-  // === FORMAT DE SORTIE (JSON strict) ===
-  "Réponds UNIQUEMENT par un objet JSON brut, sans markdown, sans commentaire, sans texte avant/après.",
-  "Structure obligatoire :",
-  "  - label: string (max 80 caractères, français naturel)",
-  "  - competition: string (nom officiel)",
-  "  - event: string (EquipeA vs EquipeB, ou JoueurA vs JoueurB)",
-  "  - event_date: string (format strict YYYY-MM-DD)",
-  "  - market: string (type de pari, ex: 'Asian Handicap -0.5')",
-  "  - pick: string (sélection précise, ex: 'Victoire Marseille AH -0.5')",
-  "  - rationale: string (1-2 phrases, argument concret)",
-  "  - caution: string (risque spécifique à ce pari)",
-  "  - confidence: number (1-10, base 10 = quasi-certain, jamais attribué)",
-  
-  // === VALIDATIONS ===
-  "Chaque champ doit être vérifiable indépendamment. Si un champ est incertain, tu refuses la sélection entière.",
-  "Pour les tournois (ATP/WTA, NBA, EuroLeague, LDC), les phases éliminatoires suffisent ; pas besoin de ligue régulière.",
-  
-  // === LANGUE ===
-  "Tous les champs textuels en français naturel, clair, professionnel. Pas de jargon technique inutile."
+  "Tu es un analyste de paris rigoureux et factuel.",
+  "Tu ne proposes que des evenements reels, a venir et verifiables.",
+  "Tu n'inventes jamais date, competition, event, marche, pick ou cote.",
+  "Si un doute existe sur l'existence, la date ou le statut d'un evenement, tu l'exclus.",
+  "Un single solide vaut mieux qu'un combine force. Maximum 3 selections par suggestion.",
+  "Tu privilegies les marches defendables plutot que les choix populaires.",
+  "Tu reponds uniquement en JSON brut, sans markdown ni texte autour.",
+].join(" ");
+
+const disciplineSystemPrompt = [
+  "Tu es un coach de discipline de paris sportifs, froid, lucide et utile.",
+  "Tu analyses uniquement les statistiques et tendances fournies. Tu n'inventes rien.",
+  "Tu ne donnes aucun prono de match, aucun angle de cote, aucune prediction evenementielle.",
+  "Ton but: pointer les forces, les risques de discipline, et proposer des routines concretes de bankroll et de comportement.",
+  "Tu surveilles surtout: hausse des mises, chasse aux pertes, surexposition, excès de combinés, irrégularité, surconfiance et mauvaise gestion du volume.",
+  "Tu réponds uniquement en JSON strict: {summary:string,strengths:string[],warnings:string[],actions:string[]}.",
+  "summary = 1 a 2 phrases. strengths = 2 a 3 points max. warnings = 2 a 4 points max. actions = 3 a 5 points max.",
+  "Chaque point doit etre court, concret, en francais naturel, actionnable cette semaine.",
 ].join(" ");
 
 const anthropicRadarTools = [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }];
@@ -348,6 +331,16 @@ function isNoUsableSuggestionsError(error) {
   return error instanceof Error && error.message === NO_USABLE_SUGGESTIONS_ERROR;
 }
 
+function createRequestTooLargeError() {
+  const error = new Error("Radar a du compacter la requete car le contexte etait trop lourd.");
+  error.code = RADAR_REQUEST_TOO_LARGE_ERROR;
+  return error;
+}
+
+function isRequestTooLargeError(error) {
+  return error instanceof Error && error.code === RADAR_REQUEST_TOO_LARGE_ERROR;
+}
+
 function buildShiftNote(requestedStartDate, requestedEndDate, nextStartDate, nextEndDate) {
   if (nextStartDate === nextEndDate) {
     return `Aucun evenement plausible entre ${requestedStartDate} et ${requestedEndDate}. Radar a glisse vers le ${nextStartDate}.`;
@@ -369,6 +362,17 @@ function buildRadarAttempts(requestedStartDate, requestedEndDate) {
       note: offset > 0 ? buildShiftNote(requestedStartDate, requestedEndDate, startDate, endDate) : "",
     };
   });
+}
+
+function buildCompactInstructionSet() {
+  return [
+    "0 a 3 suggestions plausibles.",
+    "1 a 3 selections maximum.",
+    "Aucune selection hors fenetre ni avant aujourd'hui.",
+    "Si doute, exclue l'evenement.",
+    "Prefere un single solide a un combine force.",
+    "JSON strict uniquement.",
+  ].join(" ");
 }
 
 function normalizeFreeText(value) {
@@ -598,46 +602,46 @@ function isIsoDateInput(value) {
 
 function getMarketGuideForSport(sport) {
   if (sport === "Football") {
-    return "Prefer markets such as double chance, draw no bet, asian handicap, under or over goals, both teams to score when justified, team totals, first-half lines, or clean lower-variance alternatives when they offer a clearer edge than 1X2.";
+    return "Marches privilegies: double chance, draw no bet, handicap, totals, BTTS si justifie.";
   }
 
   if (sport === "Basketball") {
-    return "Prefer markets such as spread, alternate spread, moneyline only when truly justified, match total, team total, first-half spread, first-half total, or lower-volatility team angles instead of forcing a straight winner.";
+    return "Marches privilegies: spread, total match, team total, 1re mi-temps.";
   }
 
   if (sport === "Tennis") {
-    return "Prefer markets such as match winner, first set winner, games handicap, sets handicap, total games, player to win a set, or safer set or game angles when they are more defensible than a raw favorite pick.";
+    return "Marches privilegies: vainqueur, handicap jeux, handicap sets, total jeux, 1er set.";
   }
 
-  return "Vary the markets prudently and prefer the most defensible angle rather than the most popular one.";
+  return "Choisis le marche le plus defendable.";
 }
 
 function getRiskGuideForRadar(risk) {
   if (risk === "prudent") {
-    return "Prudent profile: prefer lower-variance markets, safer lines, and avoid thin edges or heavily correlated legs.";
+    return "Profil prudent: variance basse, lignes sages, peu de correlation.";
   }
 
   if (risk === "aggressive") {
-    return "Aggressive profile: you may take stronger lines or more assertive angles, but they must still be evidence-based and not speculative.";
+    return "Profil agressif: angles plus forts possibles, mais jamais speculatifs.";
   }
 
-  return "Balanced profile: mix solid mainstream markets with selective secondary angles when they clearly improve the risk-reward profile.";
+  return "Profil equilibre: mix de marches solides et angles secondaires defensables.";
 }
 
 function getSearchFocusForSport(sport) {
   if (sport === "Football") {
-    return "Priorite aux grandes ligues et coupes avec calendrier public fiable, sur sites officiels ou medias sportifs reconnus.";
+    return "Priorite aux calendriers publics fiables des ligues et coupes majeures.";
   }
 
   if (sport === "Basketball") {
-    return "Priorite aux calendriers publics NBA, EuroLeague et grandes competitions nationales clairement programmees; evite les affiches floues ou mal datees.";
+    return "Priorite aux calendriers publics NBA, EuroLeague et competitions claires.";
   }
 
   if (sport === "Tennis") {
-    return "Priorite aux matchs ATP, WTA, Challenger et grandes competitions ITF avec ordre de jeu ou calendrier officiel clairement publie; si un match confirme existe, propose au moins un single plutot que rien.";
+    return "Priorite aux matchs ATP, WTA, Challenger et ITF avec ordre de jeu fiable.";
   }
 
-  return "Priorite aux competitions avec calendrier public fiable.";
+  return "Priorite aux competitions avec calendrier fiable.";
 }
 
 function getStructuredSportName(sport) {
@@ -688,8 +692,6 @@ function normalizeStructuredRadarEvent(event) {
   const competition = normalizeFreeText(event?.strLeague);
   const eventLabel = normalizeFreeText(event?.strEvent);
   const eventDate = readDateField(event?.dateEventLocal) || readDateField(event?.dateEvent);
-  const status = normalizeFreeText(event?.strStatus);
-  const country = normalizeFreeText(event?.strCountry);
 
   if (!competition || !eventLabel || !eventDate) {
     return null;
@@ -699,8 +701,6 @@ function normalizeStructuredRadarEvent(event) {
     competition,
     event: eventLabel,
     event_date: eventDate,
-    status: status || "Not Started",
-    country,
   };
 }
 
@@ -752,16 +752,115 @@ async function fetchStructuredRadarEventsForWindow(sport, startDate, endDate, to
   return Array.from(eventsBySignature.values()).slice(0, MAX_STRUCTURED_RADAR_EVENTS);
 }
 
-function buildStructuredEventsPrompt(events) {
+function buildStructuredEventsPrompt(events, compact = false) {
   if (!Array.isArray(events) || !events.length) {
     return "Aucune fixture structuree exploitable n'a ete trouvee dans la fenetre; tu peux alors t'appuyer sur la recherche web.";
   }
 
+  const limitedEvents = events.slice(0, compact ? MAX_COMPACT_STRUCTURED_RADAR_EVENTS : MAX_STRUCTURED_RADAR_EVENTS);
+  const summarizedEvents = limitedEvents
+    .map((event, index) => `${index + 1}. ${event.event_date} | ${event.competition} | ${event.event}`)
+    .join(" ; ");
+
   return [
-    "Voici une liste de fixtures structurees deja trouvees pour cette fenetre.",
-    "Priorite absolue a ces evenements: ne propose en premier lieu que des selections issues de cette liste et n'invente aucun autre match si cette liste suffit.",
-    JSON.stringify(events),
+    "Fixtures structurees deja verifiees dans la fenetre.",
+    "Priorite absolue a ces affiches avant toute autre recherche.",
+    summarizedEvents,
   ].join(" ");
+}
+
+function buildRadarUserPrompt({
+  sport,
+  risk,
+  todayIso,
+  historyContext,
+  marketGuide,
+  riskGuide,
+  searchFocus,
+  attempt,
+  structuredEventsPrompt,
+  compact = false,
+}) {
+  const contextBlocks = compact
+    ? [historyContext, structuredEventsPrompt]
+    : [historyContext, marketGuide, riskGuide, searchFocus, structuredEventsPrompt];
+
+  const baseInstructions = [
+    `Sport: ${sport}.`,
+    `Risque: ${risk}.`,
+    `Date de reference aujourd'hui: ${todayIso}.`,
+    attempt.startDate === attempt.endDate
+      ? `Fenetre souhaitee: ${attempt.startDate}.`
+      : `Fenetre souhaitee: du ${attempt.startDate} au ${attempt.endDate}.`,
+    attempt.shifted
+      ? `Fenetre de repli automatique autorisee: du ${attempt.startDate} au ${attempt.endDate}. Signale clairement ce decalage.`
+      : "Reste prioritairement dans la fenetre demandee.",
+    ...contextBlocks,
+    `Aucune selection ne doit avoir un event_date hors de ${attempt.startDate} -> ${attempt.endDate} ni avant ${todayIso}.`,
+    "Chaque leg doit contenir competition, event, event_date, market et pick.",
+    "event = les deux equipes ou joueurs seulement.",
+    "label, market, pick, rationale, caution et note en francais.",
+    "N'ecris jamais d'heure exacte.",
+    "Format JSON strict: {used_window:{start_date,end_date}, shifted:boolean, note:string, suggestions:[{label, legs:[{competition,event,event_date,market,pick}], odds, rationale, caution}]}",
+  ];
+
+  if (compact) {
+    return [...baseInstructions, buildCompactInstructionSet()].join(" ");
+  }
+
+  return [
+    ...baseInstructions,
+    "Tu peux retourner de 0 a 4 suggestions realistes avec 1 a 3 selections maximum par suggestion.",
+    "Ne cite jamais un match deja joue, une finale historique ou un tournoi termine.",
+    "Une competition de coupe ou de tournoi compte pleinement: tu ne te limites jamais aux ligues nationales.",
+    "Si tu n'es pas sur qu'un evenement est a venir dans la fenetre demandee, tu l'exclus au lieu de deviner.",
+    "Si aucun evenement plausible n'existe dans la fenetre demandee, tu peux te decaler vers la prochaine fenetre utile, au maximum 3 jours apres la fin demandee.",
+    "Pour un evenement qui tombe aujourd'hui, verifie aussi qu'il est encore a venir; s'il y a un doute sur l'horaire ou le statut, exclue-le.",
+    "Si la date d'un evenement n'est pas clairement verifiee, exclue cet evenement.",
+    "Diversifie les marches sur les suggestions quand c'est plausible.",
+    "Evite de reutiliser les memes affiches sauf si c'est vraiment incontournable.",
+    "N'abuse pas des vainqueurs secs, des moneylines ou des overs generiques si un meilleur marche existe sur le meme evenement.",
+    "Utilise des marches secondaires mais mainstream lorsqu'ils offrent une option plus judicieuse que le choix public le plus evident.",
+    "Si au moins un match confirme existe dans la fenetre, meme s'il s'agit seulement d'un tournoi ATP, WTA ou Challenger, propose au moins une suggestion a partir de lui.",
+    "Si seuls un ou deux evenements solides existent, propose quand meme un single ou une suggestion courte plutot que suggestions: [].",
+    "Si tu ne peux pas produire une suggestion plausible sans halluciner, retourne suggestions: [].",
+    "Pour chaque suggestion, retourne un label court et lisible en francais, les selections, la cote estimee, une rationale concise en francais et une vigilance concise en francais.",
+    "La reponse doit etre un seul objet JSON brut, sans balise markdown et sans phrase d'introduction ou de conclusion.",
+    "Si la fenetre est decalee, tu dois le signaler clairement dans note et used_window.",
+  ].join(" ");
+}
+
+function normalizeAdviceText(value, maxLength = 220) {
+  return normalizeFreeText(typeof value === "string" ? value : "").slice(0, maxLength);
+}
+
+function normalizeAdviceList(value, maxItems) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => normalizeAdviceText(entry, 160))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function normalizeDisciplineAnalysisResult(parsed) {
+  const summary = normalizeAdviceText(parsed?.summary, 320);
+  const strengths = normalizeAdviceList(parsed?.strengths, 3);
+  const warnings = normalizeAdviceList(parsed?.warnings, 4);
+  const actions = normalizeAdviceList(parsed?.actions, 5);
+
+  if (!summary || (!strengths.length && !warnings.length && !actions.length)) {
+    throw new Error("La reponse discipline n'est pas exploitable.");
+  }
+
+  return {
+    summary,
+    strengths,
+    warnings,
+    actions,
+  };
 }
 
 function readRequestBody(request, maxBytes = MAX_RADAR_BODY_BYTES) {
@@ -849,6 +948,10 @@ async function requestGroqRadar(apiKey, payload) {
 
     if (groqResponse.ok) {
       break;
+    }
+
+    if (groqResponse.status === 413) {
+      throw createRequestTooLargeError();
     }
 
     if (groqResponse.status !== 429) {
@@ -993,6 +1096,34 @@ async function requestRadarProvider(provider, { systemPrompt, userPrompt, maxTok
     temperature,
     system: systemPrompt,
     tools: anthropicRadarTools,
+    messages: [
+      {
+        role: "user",
+        content: userPrompt,
+      },
+    ],
+  });
+}
+
+async function requestDisciplineProvider(provider, { systemPrompt, userPrompt, maxTokens, temperature }) {
+  if (provider?.name === RADAR_PROVIDER_GROQ) {
+    return requestGroqRadar(provider.apiKey, {
+      model: GROQ_RADAR_MODEL,
+      max_completion_tokens: maxTokens,
+      temperature,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    });
+  }
+
+  return requestAnthropicRadar(provider.apiKey, {
+    model: ANTHROPIC_RADAR_MODEL,
+    max_tokens: maxTokens,
+    temperature,
+    system: systemPrompt,
     messages: [
       {
         role: "user",
@@ -1151,8 +1282,10 @@ async function processRadarHttpRequest({
   readBody,
 }) {
   const pathname = getPathnameFromUrl(requestUrl);
+  const isSuggestionsRoute = requestMethod === "POST" && pathname === "/api/radar";
+  const isDisciplineRoute = requestMethod === "POST" && pathname === "/api/radar-discipline";
 
-  if (requestMethod !== "POST" || pathname !== "/api/radar") {
+  if (!isSuggestionsRoute && !isDisciplineRoute) {
     return null;
   }
 
@@ -1182,11 +1315,52 @@ async function processRadarHttpRequest({
       return { status: 400, payload: { error: "JSON invalide." } };
     }
 
+    if (isDisciplineRoute) {
+      const statsSummary = normalizeFreeText(parsedBody?.statsSummary).slice(0, 1400);
+      const recentResults = Array.isArray(parsedBody?.recentResults)
+        ? parsedBody.recentResults
+            .map((entry) => normalizeFreeText(entry).slice(0, 24))
+            .filter(Boolean)
+            .slice(0, MAX_DISCIPLINE_RECENT_RESULTS)
+        : [];
+
+      if (!statsSummary) {
+        return { status: 400, payload: { error: "Statistiques manquantes pour analyser la discipline." } };
+      }
+
+      const providerPayload = await requestDisciplineProvider(provider, {
+        systemPrompt: disciplineSystemPrompt,
+        userPrompt: [
+          "Analyse ce profil de parieur sans juger la personne.",
+          "Repere surtout la discipline, la gestion du risque, les habitudes de mise et les angles de comportement.",
+          "Ne donne aucun pronostic de match.",
+          `Resume statistique: ${statsSummary}`,
+          recentResults.length
+            ? `Sequence recente des tickets regles (du plus recent au plus ancien): ${recentResults.join(", ")}.`
+            : "Aucune sequence recente exploitable.",
+        ].join(" "),
+        maxTokens: 420,
+        temperature: 0.2,
+      });
+
+      const parsedDisciplinePayload = extractRadarJsonPayload(providerPayload);
+
+      return {
+        status: 200,
+        payload: {
+          analysis: normalizeDisciplineAnalysisResult(parsedDisciplinePayload),
+        },
+      };
+    }
+
     const sport = typeof parsedBody?.sport === "string" ? parsedBody.sport.trim() : "";
     const risk = typeof parsedBody?.risk === "string" ? parsedBody.risk.trim() : "";
     const startDate = isIsoDateInput(parsedBody?.startDate) ? String(parsedBody.startDate).trim() : "";
     const endDate = isIsoDateInput(parsedBody?.endDate) ? String(parsedBody.endDate).trim() : "";
-    const historySummary = typeof parsedBody?.historySummary === "string" ? parsedBody.historySummary.trim().slice(0, 500) : "";
+    const historySummary =
+      typeof parsedBody?.historySummary === "string"
+        ? parsedBody.historySummary.trim().slice(0, MAX_RADAR_HISTORY_SUMMARY_CHARS)
+        : "";
     const todayIso = getDoualaIsoDate();
     const currentUsagePeriodStart = getDoualaWeekStartIsoDate();
 
@@ -1233,7 +1407,6 @@ async function processRadarHttpRequest({
       return { status: 429, payload: { error: "Quota de la semaine atteint. Obtiens des jetons pour continuer.", usage: reservation } };
     }
 
-    const currentDateContext = `Date de reference aujourd'hui: ${todayIso}.`;
     const historyContext = historySummary
       ? `Contexte historique utilisateur: ${historySummary}.`
       : "Contexte historique utilisateur: aucun historique exploitable pour le moment.";
@@ -1244,88 +1417,69 @@ async function processRadarHttpRequest({
     let lastNoUsableSuggestions = false;
 
     for (const attempt of attempts) {
-      const dateContext =
-        attempt.startDate === attempt.endDate
-          ? `Fenetre souhaitee: ${attempt.startDate}.`
-          : `Fenetre souhaitee: du ${attempt.startDate} au ${attempt.endDate}.`;
-      const fallbackContext = attempt.shifted
-        ? `Fenetre de repli automatique autorisee: du ${attempt.startDate} au ${attempt.endDate}. Garde cette fenetre proche et signale clairement ce decalage.`
-        : "Reste prioritairement dans la fenetre demandee.";
       const structuredEvents = await fetchStructuredRadarEventsForWindow(
         sport,
         attempt.startDate,
         attempt.endDate,
         todayIso,
       );
-      const structuredEventsPrompt = buildStructuredEventsPrompt(structuredEvents);
+      const compactVariants = provider?.name === RADAR_PROVIDER_GROQ ? [false, true] : [false];
 
-      const userPrompt = [
-        `Sport: ${sport}.`,
-        `Risque: ${risk}.`,
-        currentDateContext,
-        dateContext,
-        fallbackContext,
-        historyContext,
-        marketGuide,
-        riskGuide,
-        searchFocus,
-        structuredEventsPrompt,
-        "Tu peux retourner de 0 a 4 suggestions realistes avec 1 a 3 selections maximum par suggestion.",
-        "Ne cite jamais un match deja joue, une finale historique ou un tournoi termine.",
-        "Une competition de coupe ou de tournoi compte pleinement: tu ne te limites jamais aux ligues nationales.",
-        `Aucune selection ne doit avoir un event_date en dehors de la fenetre ${attempt.startDate} -> ${attempt.endDate} ni avant ${todayIso}.`,
-        "Si tu n'es pas sur qu'un evenement est a venir dans la fenetre demandee, tu l'exclus au lieu de deviner.",
-        "Si aucun evenement plausible n'existe dans la fenetre demandee, tu peux te decaler vers la prochaine fenetre utile, au maximum 3 jours apres la fin demandee.",
-        "N'ecris jamais d'heure exacte.",
-        "Pour un evenement qui tombe aujourd'hui, verifie aussi qu'il est encore a venir; s'il y a un doute sur l'horaire ou le statut, exclue-le.",
-        "Chaque leg doit contenir competition, event, event_date, market et pick. competition = tournoi ou championnat. event = les deux equipes ou joueurs seulement. event_date = YYYY-MM-DD verifie.",
-        "Redige label, market, pick, rationale, caution et note uniquement en francais.",
-        "Si la date d'un evenement n'est pas clairement verifiee, exclue cet evenement.",
-        "Diversifie les marches sur les suggestions quand c'est plausible.",
-        "Evite de reutiliser les memes affiches sauf si c'est vraiment incontournable.",
-        "N'abuse pas des vainqueurs secs, des moneylines ou des overs generiques si un meilleur marche existe sur le meme evenement.",
-        "Utilise des marches secondaires mais mainstream lorsqu'ils offrent une option plus judicieuse que le choix public le plus evident.",
-        "Si au moins un match confirme existe dans la fenetre, meme s'il s'agit seulement d'un tournoi ATP, WTA ou Challenger, propose au moins une suggestion a partir de lui.",
-        "Si seuls un ou deux evenements solides existent, propose quand meme un single ou une suggestion courte plutot que suggestions: [].",
-        "Si tu ne peux pas produire une suggestion plausible sans halluciner, retourne suggestions: [].",
-        "Pour chaque suggestion, retourne un label court et lisible en francais, les selections, la cote estimee, une rationale concise en francais et une vigilance concise en francais.",
-        "La reponse doit etre un seul objet JSON brut, sans balise markdown et sans phrase d'introduction ou de conclusion.",
-        "Si la fenetre est decalee, tu dois le signaler clairement dans note et used_window.",
-        "Format JSON strict: {used_window:{start_date,end_date}, shifted:boolean, note:string, suggestions:[{label, legs:[{competition,event,event_date,market,pick}], odds, rationale, caution}]}",
-      ].join(" ");
-
-      const providerPayload = await requestRadarProvider(provider, {
-        systemPrompt: anthropicSystemPrompt,
-        userPrompt,
-        maxTokens: 620,
-        temperature: 0.2,
-      });
-
-      try {
-        const parsedRadarPayload = extractRadarJsonPayload(providerPayload);
-        const result = normalizeRadarResult(
-          parsedRadarPayload,
-          attempt.startDate,
-          attempt.endDate,
+      for (const compact of compactVariants) {
+        const structuredEventsPrompt = buildStructuredEventsPrompt(structuredEvents, compact);
+        const userPrompt = buildRadarUserPrompt({
+          sport,
+          risk,
           todayIso,
-          attempt.shifted
-            ? {
-                startDate: attempt.startDate,
-                endDate: attempt.endDate,
-                note: attempt.note,
-              }
-            : undefined,
-          reservation,
-        );
+          historyContext,
+          marketGuide,
+          riskGuide,
+          searchFocus,
+          attempt,
+          structuredEventsPrompt,
+          compact,
+        });
 
-        return { status: 200, payload: result };
-      } catch (error) {
-        if (isNoUsableSuggestionsError(error)) {
-          lastNoUsableSuggestions = true;
-          continue;
+        try {
+          const providerPayload = await requestRadarProvider(provider, {
+            systemPrompt: anthropicSystemPrompt,
+            userPrompt,
+            maxTokens: compact ? 520 : 620,
+            temperature: 0.2,
+          });
+          const parsedRadarPayload = extractRadarJsonPayload(providerPayload);
+          const result = normalizeRadarResult(
+            parsedRadarPayload,
+            attempt.startDate,
+            attempt.endDate,
+            todayIso,
+            attempt.shifted
+              ? {
+                  startDate: attempt.startDate,
+                  endDate: attempt.endDate,
+                  note: attempt.note,
+                }
+              : undefined,
+            reservation,
+          );
+
+          return { status: 200, payload: result };
+        } catch (error) {
+          if (isRequestTooLargeError(error) && compact === false) {
+            continue;
+          }
+
+          if (isNoUsableSuggestionsError(error)) {
+            lastNoUsableSuggestions = true;
+            break;
+          }
+
+          if (isRequestTooLargeError(error)) {
+            throw createHttpError(413, "Radar a genere trop de contexte interne pour cette demande. Relance simplement l'analyse.");
+          }
+
+          throw error;
         }
-
-        throw error;
       }
     }
 

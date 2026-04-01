@@ -4,6 +4,7 @@ import { Check, Copy, KeyRound, MessageCircle, Wallet, X } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  RADAR_TOKEN_UNIT_PRICE_FCFA,
   buildRadarPaymentHref,
   buildRadarPurchaseWhatsAppHref,
   getRadarCreditOffer,
@@ -216,6 +217,10 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
                         <p className="mt-1 text-xs leading-5 text-muted-foreground">{offer.tagline}</p>
                         <p className="mt-3 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{offer.tokenCount} jetons</p>
                         <p className="mt-1 text-sm font-medium text-foreground">{offer.amountFcfa} FCFA</p>
+                        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+                          {offer.unitPriceFcfa} FCFA / jeton
+                          {offer.savingsFcfa > 0 ? ` - economie ${offer.savingsFcfa} FCFA` : ""}
+                        </p>
                       </button>
                     );
                   })}
@@ -225,6 +230,9 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
                   <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Pack choisi</p>
                   <p className="mt-1 text-base font-semibold text-foreground">
                     {selectedOffer.label} - {selectedOffer.tokenCount} jetons - {selectedOffer.amountFcfa} FCFA
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    Base unitaire {RADAR_TOKEN_UNIT_PRICE_FCFA} FCFA. Ce pack ramene le jeton a {selectedOffer.unitPriceFcfa} FCFA.
                   </p>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">
                     Paiement manuel, confirmation WhatsApp, puis activation avec un code a usage unique.

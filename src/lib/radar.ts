@@ -4,6 +4,7 @@ import type { RadarAccessMode } from "@/types/supabase";
 export const radarSports = ["Football", "Basketball", "Tennis"] as const;
 export const RADAR_WEEKLY_LIMIT = 2;
 const RADAR_REQUEST_TIMEOUT_MS = 240000;
+const RADAR_DISCIPLINE_TIMEOUT_MS = 90000;
 const radarUsageStoragePrefix = "lucide:radar-usage";
 const doualaDateFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Africa/Douala",
@@ -68,6 +69,13 @@ export interface RadarResult {
   usage?: RadarUsageStatus;
 }
 
+export interface RadarDisciplineAnalysis {
+  summary: string;
+  strengths: string[];
+  warnings: string[];
+  actions: string[];
+}
+
 export interface RadarUsageStatus {
   usedCount: number;
   remainingCount: number;
@@ -91,6 +99,11 @@ export interface RadarRequestInput {
   startDate: string;
   endDate: string;
   historySummary?: string;
+}
+
+export interface RadarDisciplineRequestInput {
+  statsSummary: string;
+  recentResults?: string[];
 }
 
 export interface RadarTokenRedemptionResult {
@@ -398,7 +411,7 @@ export async function redeemRadarTokenCode(plainCode: string): Promise<RadarToke
   };
 }
 
-export async function fetchRadarSuggestions(input: RadarRequestInput): Promise<RadarResult> {
+async function getRadarAccessToken() {
   if (!isSupabaseConfigured) {
     throw new Error("Supabase n'est pas configure.");
   }
@@ -416,29 +429,42 @@ export async function fetchRadarSuggestions(input: RadarRequestInput): Promise<R
     throw new Error("Session invalide. Reconnecte-toi.");
   }
 
+  return accessToken;
+}
+
+async function postAuthorizedRadarRequest<TResponse>(options: {
+  path: string;
+  body: unknown;
+  timeoutMs: number;
+  timeoutMessage: string;
+  networkMessage: string;
+  fallbackMessage: string;
+}): Promise<TResponse> {
+  const accessToken = await getRadarAccessToken();
+
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), RADAR_REQUEST_TIMEOUT_MS);
+  const timeoutId = window.setTimeout(() => controller.abort(), options.timeoutMs);
   let response: Response;
 
   try {
-    response = await fetch("/api/radar", {
+    response = await fetch(options.path, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${accessToken}`,
       },
       signal: controller.signal,
-      body: JSON.stringify(input),
+      body: JSON.stringify(options.body),
     });
   } catch (error) {
     window.clearTimeout(timeoutId);
 
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error("Radar a pris trop de temps. Relance l'analyse.");
+      throw new Error(options.timeoutMessage);
     }
 
     if (error instanceof TypeError) {
-      throw new Error("Connexion impossible pour le moment. Verifie ta connexion ou relance l'analyse.");
+      throw new Error(options.networkMessage);
     }
 
     throw error;
@@ -446,13 +472,28 @@ export async function fetchRadarSuggestions(input: RadarRequestInput): Promise<R
 
   window.clearTimeout(timeoutId);
 
-  const payload = (await response.json().catch(() => null)) as
-    | { suggestions?: RadarSuggestion[]; window?: RadarWindowInfo; usage?: RadarUsageStatus; error?: string }
-    | null;
+  const payload = (await response.json().catch(() => null)) as ({ error?: string } & TResponse) | null;
 
   if (!response.ok) {
-    throw new Error(payload?.error ?? "Impossible d'analyser pour le moment.");
+    throw new Error(payload?.error ?? options.fallbackMessage);
   }
+
+  return (payload ?? {}) as TResponse;
+}
+
+export async function fetchRadarSuggestions(input: RadarRequestInput): Promise<RadarResult> {
+  const payload = await postAuthorizedRadarRequest<{
+    suggestions?: RadarSuggestion[];
+    window?: RadarWindowInfo;
+    usage?: RadarUsageStatus;
+  }>({
+    path: "/api/radar",
+    body: input,
+    timeoutMs: RADAR_REQUEST_TIMEOUT_MS,
+    timeoutMessage: "Radar a pris trop de temps. Relance l'analyse.",
+    networkMessage: "Connexion impossible pour le moment. Verifie ta connexion ou relance l'analyse.",
+    fallbackMessage: "Impossible d'analyser pour le moment.",
+  });
 
   return {
     suggestions: payload?.suggestions ?? [],
@@ -464,4 +505,25 @@ export async function fetchRadarSuggestions(input: RadarRequestInput): Promise<R
     },
     usage: payload?.usage,
   };
+}
+
+export async function fetchRadarDisciplineAnalysis(
+  input: RadarDisciplineRequestInput,
+): Promise<RadarDisciplineAnalysis> {
+  const payload = await postAuthorizedRadarRequest<{
+    analysis?: RadarDisciplineAnalysis;
+  }>({
+    path: "/api/radar-discipline",
+    body: input,
+    timeoutMs: RADAR_DISCIPLINE_TIMEOUT_MS,
+    timeoutMessage: "Le coach discipline prend trop de temps. Relance l'analyse.",
+    networkMessage: "Connexion impossible pour le moment. Verifie ta connexion ou relance l'analyse.",
+    fallbackMessage: "Impossible d'analyser ta discipline pour le moment.",
+  });
+
+  if (!payload.analysis) {
+    throw new Error("Impossible d'analyser ta discipline pour le moment.");
+  }
+
+  return payload.analysis;
 }

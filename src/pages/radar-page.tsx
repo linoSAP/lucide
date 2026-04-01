@@ -9,16 +9,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import {
+  calculateAverageStake,
   calculateBetKindBreakdown,
   calculateBetMetrics,
   createBet,
   getMostProfitableSport,
+  getWorstLosingStreak,
 } from "@/lib/bets";
 import { formatAmountValue, formatPercent } from "@/lib/format";
 import { useBets } from "@/hooks/use-bets";
 import {
   RADAR_WEEKLY_LIMIT,
+  fetchRadarDisciplineAnalysis,
   fetchRadarSuggestions,
+  type RadarDisciplineAnalysis,
   getRadarUsageStatus,
   getRiskLabel,
   getRiskMeta,
@@ -39,6 +43,9 @@ const radarDateModeOptions: Array<{ value: RadarDateMode; label: string }> = [
   { value: "day", label: "Jour" },
   { value: "range", label: "Plage" },
 ];
+
+const buyTokensButtonClass =
+  "rounded-full border border-[#ffd248]/45 bg-[linear-gradient(135deg,#fff1a8_0%,#ffd248_36%,#ffb020_100%)] text-[#3b2400] shadow-[0_16px_42px_rgba(255,176,32,0.24)] hover:brightness-[1.03] hover:shadow-[0_20px_48px_rgba(255,176,32,0.3)]";
 
 const dateLabelFormatter = new Intl.DateTimeFormat("fr-CM", {
   day: "numeric",
@@ -108,12 +115,65 @@ function buildRadarHistorySummary(bets: BetRow[]) {
 
   return [
     `${bets.length} ticket(s)`,
-    `${formatPercent(metrics.winRate)} de reussite`,
-    `bilan ${formatAmountValue(metrics.net)} FCFA`,
+    `reussite ${formatPercent(metrics.winRate)}`,
+    `net ${formatAmountValue(metrics.net)} FCFA`,
     `sport rentable ${profitableSport}`,
-    `${kindBreakdown.combo.count} combine(s)`,
-    `${kindBreakdown.single.count} simple(s)`,
+    `${kindBreakdown.combo.count} combine(s) / ${kindBreakdown.single.count} simple(s)`,
   ].join(". ");
+}
+
+function buildRecentSettledResults(bets: BetRow[]) {
+  return [...bets]
+    .filter((bet) => bet.status !== "pending")
+    .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())
+    .slice(0, 10)
+    .map((bet) => {
+      if (bet.status === "won") {
+        return "gagne";
+      }
+
+      if (bet.status === "lost") {
+        return "perdu";
+      }
+
+      return "cashout";
+    });
+}
+
+function buildRadarDisciplineInput(bets: BetRow[]) {
+  if (!bets.length) {
+    return {
+      statsSummary: "Aucun historique exploitable pour le moment.",
+      recentResults: [],
+    };
+  }
+
+  const metrics = calculateBetMetrics(bets);
+  const kindBreakdown = calculateBetKindBreakdown(bets);
+  const averageStake = calculateAverageStake(bets);
+  const profitableSport = getMostProfitableSport(bets);
+  const worstLosingStreak = getWorstLosingStreak(bets);
+  const settledCount = bets.filter((bet) => bet.status !== "pending").length;
+
+  return {
+    statsSummary: [
+      `Volume total ${bets.length} tickets`,
+      `Tickets regles ${settledCount}`,
+      `Paris en cours ${metrics.pendingCount}`,
+      `Reussite ${formatPercent(metrics.winRate)}`,
+      `ROI ${formatPercent(metrics.roi, true)}`,
+      `Bilan net ${formatAmountValue(metrics.net)} FCFA`,
+      `Mise moyenne ${formatAmountValue(averageStake)} FCFA`,
+      `Exposition ouverte ${formatAmountValue(metrics.openExposure)} FCFA`,
+      `Cote moyenne ${metrics.averageOdds.toFixed(2)}`,
+      `Sport le plus joue ${metrics.favoriteSport}`,
+      `Sport le plus rentable ${profitableSport}`,
+      `Pire serie perdante ${worstLosingStreak}`,
+      `Simples ${kindBreakdown.single.count} tickets, net ${formatAmountValue(kindBreakdown.single.net)} FCFA, reussite ${formatPercent(kindBreakdown.single.winRate)}`,
+      `Combines ${kindBreakdown.combo.count} tickets, net ${formatAmountValue(kindBreakdown.combo.net)} FCFA, reussite ${formatPercent(kindBreakdown.combo.winRate)}, moyenne ${kindBreakdown.combo.averageEventCount.toFixed(1)} evenement(s)`,
+    ].join(". "),
+    recentResults: buildRecentSettledResults(bets),
+  };
 }
 
 function RadarSkeleton({ accentColor }: { accentColor: string }) {
@@ -144,6 +204,40 @@ function RadarSkeleton({ accentColor }: { accentColor: string }) {
 
 function MetaPill({ children }: { children: string }) {
   return <div className="rounded-full bg-white/5 px-3 py-1.5 text-xs text-muted-foreground">{children}</div>;
+}
+
+function DisciplinePanel({
+  title,
+  items,
+  tone,
+}: {
+  title: string;
+  items: string[];
+  tone: "positive" | "warning" | "neutral";
+}) {
+  if (!items.length) {
+    return null;
+  }
+
+  return (
+    <div
+      className={cn(
+        "rounded-[20px] border px-4 py-4",
+        tone === "positive" && "border-positive/18 bg-positive/8",
+        tone === "warning" && "border-warning/18 bg-warning/8",
+        tone === "neutral" && "border-white/6 bg-white/4",
+      )}
+    >
+      <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">{title}</p>
+      <div className="mt-3 space-y-2">
+        {items.map((item) => (
+          <p key={`${title}-${item}`} className="text-sm leading-6 text-muted-foreground">
+            {item}
+          </p>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function ModeSwitch({
@@ -259,7 +353,7 @@ function SuggestionCard({
 export function RadarPage() {
   const navigate = useNavigate();
   const session = useAuthStore((state) => state.session);
-  const { bets, refresh: refreshBets } = useBets(40);
+  const { bets, refresh: refreshBets } = useBets();
   const [sport, setSport] = useState<RadarSport>("Football");
   const [riskIndex, setRiskIndex] = useState(1);
   const [dateMode, setDateMode] = useState<RadarDateMode>("day");
@@ -286,6 +380,9 @@ export function RadarPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSavingSuggestion, setIsSavingSuggestion] = useState(false);
   const [isCreditsModalOpen, setIsCreditsModalOpen] = useState(false);
+  const [disciplineAnalysis, setDisciplineAnalysis] = useState<RadarDisciplineAnalysis | null>(null);
+  const [disciplineError, setDisciplineError] = useState<string | null>(null);
+  const [isAnalyzingDiscipline, setIsAnalyzingDiscipline] = useState(false);
 
   const requestedWindow = useMemo(
     () => normalizeRadarWindow(dateMode, selectedDate, rangeStart, rangeEnd),
@@ -299,10 +396,14 @@ export function RadarPage() {
   const riskMeta = useMemo(() => getRiskMeta(risk), [risk]);
   const analysisRiskMeta = useMemo(() => getRiskMeta(analysisRisk), [analysisRisk]);
   const historySummary = useMemo(() => buildRadarHistorySummary(bets), [bets]);
+  const disciplineInput = useMemo(() => buildRadarDisciplineInput(bets), [bets]);
+  const disciplineMetrics = useMemo(() => calculateBetMetrics(bets), [bets]);
+  const disciplineSettledCount = useMemo(() => bets.filter((bet) => bet.status !== "pending").length, [bets]);
   const parsedBookmakerOdds = parseDecimal(bookmakerOdds);
   const parsedStakeAmount = parseDecimal(stakeAmount);
   const isRadarLimitReached = Boolean(usageStatus && usageStatus.canUseRadar === false);
   const shouldShowTokenCta = Boolean(usageStatus && usageStatus.remainingCount <= 0 && usageStatus.tokenBalance <= 0);
+  const canAnalyzeDiscipline = Boolean(session?.user) && bets.length >= 3;
   const canSaveSuggestion =
     Boolean(session?.user) &&
     Boolean(selectedSuggestion) &&
@@ -484,6 +585,33 @@ export function RadarPage() {
     }
   }
 
+  async function handleAnalyzeDiscipline() {
+    if (!session?.user) {
+      setDisciplineAnalysis(null);
+      setDisciplineError("Connecte-toi.");
+      return;
+    }
+
+    if (!canAnalyzeDiscipline) {
+      setDisciplineAnalysis(null);
+      setDisciplineError("Ajoute au moins 3 tickets pour obtenir une lecture utile de ta discipline.");
+      return;
+    }
+
+    setIsAnalyzingDiscipline(true);
+    setDisciplineError(null);
+
+    try {
+      const result = await fetchRadarDisciplineAnalysis(disciplineInput);
+      setDisciplineAnalysis(result);
+    } catch (nextError) {
+      setDisciplineAnalysis(null);
+      setDisciplineError(getErrorMessage(nextError, "Impossible d'analyser ta discipline pour le moment."));
+    } finally {
+      setIsAnalyzingDiscipline(false);
+    }
+  }
+
   return (
     <>
       <PageShell>
@@ -593,8 +721,9 @@ export function RadarPage() {
               <MetaPill>{`Dates ${requestedWindowLabel}`}</MetaPill>
               {usageStatus ? <MetaPill>{`Cette semaine ${usageStatus.usedCount}/${usageStatus.limit}`}</MetaPill> : null}
               {usageStatus ? <MetaPill>{`Jetons ${usageStatus.tokenBalance}`}</MetaPill> : null}
-              <Button variant="ghost" size="sm" className="rounded-full" onClick={() => setIsCreditsModalOpen(true)}>
-                Jetons Radar
+              <Button size="sm" className={buyTokensButtonClass} onClick={() => setIsCreditsModalOpen(true)}>
+                <Sparkles className="mr-2 h-4 w-4" />
+                Acheter des jetons
               </Button>
             </div>
 
@@ -612,8 +741,9 @@ export function RadarPage() {
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
               Prends un pack de jetons pour continuer a utiliser Radar sans attendre la semaine suivante.
             </p>
-            <Button variant="warning" size="sm" className="mt-3 rounded-full" onClick={() => setIsCreditsModalOpen(true)}>
-              Obtenir des jetons
+            <Button size="sm" className={`mt-3 ${buyTokensButtonClass}`} onClick={() => setIsCreditsModalOpen(true)}>
+              <Sparkles className="mr-2 h-4 w-4" />
+              Acheter des jetons
             </Button>
           </div>
         ) : null}
@@ -627,6 +757,66 @@ export function RadarPage() {
             </Button>
           </div>
         ) : null}
+
+        <div className="surface hairline rounded-[24px] px-4 py-4 shadow-soft">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">Discipline</p>
+              <p className="mt-2 text-sm font-medium text-foreground">Lire ses habitudes avant de relancer.</p>
+            </div>
+
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/6 text-foreground">
+              <Sparkles className="h-4 w-4" />
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <MetaPill>{`${bets.length} tickets`}</MetaPill>
+            <MetaPill>{`Regles ${disciplineSettledCount}`}</MetaPill>
+            <MetaPill>{`Reussite ${formatPercent(disciplineMetrics.winRate)}`}</MetaPill>
+            <MetaPill>{`Bilan ${formatAmountValue(disciplineMetrics.net)} FCFA`}</MetaPill>
+          </div>
+
+          <p className="mt-4 text-xs leading-5 text-muted-foreground">
+            Lecture de ton journal pour faire ressortir tes habitudes de bankroll, de rythme et de discipline.
+          </p>
+
+          <Button
+            size="lg"
+            className="mt-4 w-full rounded-[18px] shadow-soft"
+            onClick={handleAnalyzeDiscipline}
+            disabled={isAnalyzingDiscipline || !canAnalyzeDiscipline}
+          >
+            {isAnalyzingDiscipline ? (
+              <>
+                <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+                Analyse en cours...
+              </>
+            ) : (
+              "Analyser mon historique"
+            )}
+          </Button>
+
+          {!canAnalyzeDiscipline ? (
+            <p className="mt-3 text-xs leading-5 text-muted-foreground">
+              Ajoute au moins 3 tickets dans le Journal pour obtenir des conseils assez fiables.
+            </p>
+          ) : null}
+
+          {disciplineError ? <p className="mt-3 text-sm text-negative/90">{disciplineError}</p> : null}
+
+          {disciplineAnalysis ? (
+            <div className="mt-4 space-y-3">
+              <div className="rounded-[20px] border border-white/6 bg-white/4 px-4 py-4">
+                <p className="text-sm leading-6 text-foreground">{disciplineAnalysis.summary}</p>
+              </div>
+
+              <DisciplinePanel title="Forces" items={disciplineAnalysis.strengths} tone="positive" />
+              <DisciplinePanel title="Points de Vigilance" items={disciplineAnalysis.warnings} tone="warning" />
+              <DisciplinePanel title="Actions de la Semaine" items={disciplineAnalysis.actions} tone="neutral" />
+            </div>
+          ) : null}
+        </div>
 
         {analysisWindowShifted || Boolean(analysisWindowNote) ? (
           <div className="rounded-[20px] border border-warning/18 bg-warning/8 px-4 py-4 shadow-soft">

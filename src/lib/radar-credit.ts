@@ -14,35 +14,52 @@ export const radarPaymentMethodLabels: Record<RadarPaymentMethod, string> = {
   wave: "Wave",
 };
 
+export const RADAR_TOKEN_UNIT_PRICE_FCFA = 100;
+
+function buildRadarCreditOffer(input: {
+  id: string;
+  label: string;
+  tokenCount: number;
+  amountFcfa: number;
+  tagline: string;
+}) {
+  return {
+    ...input,
+    unitPriceFcfa: Math.round(input.amountFcfa / input.tokenCount),
+    baseAmountFcfa: input.tokenCount * RADAR_TOKEN_UNIT_PRICE_FCFA,
+    savingsFcfa: Math.max(0, input.tokenCount * RADAR_TOKEN_UNIT_PRICE_FCFA - input.amountFcfa),
+  } as const;
+}
+
 export const radarCreditOffers = [
-  {
+  buildRadarCreditOffer({
     id: "solo",
     label: "Solo",
     tokenCount: 1,
-    amountFcfa: 300,
-    tagline: "1 radar de secours",
-  },
-  {
+    amountFcfa: 100,
+    tagline: "Le point d'entree simple",
+  }),
+  buildRadarCreditOffer({
     id: "starter",
     label: "Starter",
     tokenCount: 3,
-    amountFcfa: 800,
-    tagline: "3 radars a prix doux",
-  },
-  {
+    amountFcfa: 250,
+    tagline: "3 analyses avec remise pack",
+  }),
+  buildRadarCreditOffer({
     id: "pulse",
     label: "Pulse",
     tokenCount: 5,
-    amountFcfa: 1300,
-    tagline: "Le pack le plus equilibre",
-  },
-  {
+    amountFcfa: 400,
+    tagline: "Le meilleur equilibre pour la cadence",
+  }),
+  buildRadarCreditOffer({
     id: "pro",
     label: "Pro",
     tokenCount: 10,
-    amountFcfa: 2400,
-    tagline: "Le meilleur prix par radar",
-  },
+    amountFcfa: 700,
+    tagline: "Le gros pack avec remise forte",
+  }),
 ] as const;
 
 export type RadarCreditOffer = (typeof radarCreditOffers)[number];

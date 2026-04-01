@@ -50,7 +50,7 @@ export function getBetKindLabel(kind: BetKind) {
 }
 
 export function getBetKindVariant(kind: BetKind) {
-  return isComboBet(kind) ? ("warning" as const) : ("muted" as const);
+  return isComboBet(kind) ? ("muted" as const) : ("muted" as const);
 }
 
 const allowedBetKinds = new Set<BetKind>(["single", "combo"]);
@@ -274,7 +274,7 @@ export function getStatusVariant(status: BetStatus) {
   }
 
   if (status === "cashed_out") {
-    return "warning" as const;
+    return "muted" as const;
   }
 
   if (status === "lost") {

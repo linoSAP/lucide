@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { formatDateTime } from "@/lib/format";
 import {
+  RADAR_TOKEN_UNIT_PRICE_FCFA,
   buildRadarPaymentHref,
   buildWhatsAppHref,
   developerWhatsapp,
@@ -125,7 +126,7 @@ export function ProfilePage() {
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPaymentMethod, setAdminPaymentMethod] = useState<RadarPaymentMethod>("orange_money");
   const [adminCustomTokenCount, setAdminCustomTokenCount] = useState("1");
-  const [adminCustomAmountFcfa, setAdminCustomAmountFcfa] = useState("300");
+  const [adminCustomAmountFcfa, setAdminCustomAmountFcfa] = useState(String(RADAR_TOKEN_UNIT_PRICE_FCFA));
   const [adminGenerateError, setAdminGenerateError] = useState<string | null>(null);
   const [adminGenerateMessage, setAdminGenerateMessage] = useState<string | null>(null);
   const [isGeneratingAdminCode, setIsGeneratingAdminCode] = useState(false);
@@ -241,7 +242,7 @@ export function ProfilePage() {
       setAdminOfferId("pulse");
       setAdminPaymentMethod("orange_money");
       setAdminCustomTokenCount("1");
-      setAdminCustomAmountFcfa("300");
+      setAdminCustomAmountFcfa(String(RADAR_TOKEN_UNIT_PRICE_FCFA));
       setAdminGenerateError(null);
       setAdminGenerateMessage(null);
       setGeneratedAdminCode(null);
@@ -691,6 +692,9 @@ export function ProfilePage() {
                     <p className="text-sm font-semibold text-foreground">{adminOfferLabel}</p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">
                       {adminTokenCount} jetons - {adminAmountFcfa} FCFA - {radarPaymentMethodLabels[adminPaymentMethod]}
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground/90">
+                      Base actuelle: {RADAR_TOKEN_UNIT_PRICE_FCFA} FCFA par jeton.
                     </p>
                   </div>
 
