@@ -8,13 +8,16 @@ import {
   buildRadarPaymentHref,
   buildRadarPurchaseWhatsAppHref,
   getRadarCreditOffer,
+  getRadarCreditOfferTagline,
   radarCreditOffers,
   radarPaymentMethodLabels,
   radarPaymentRecipients,
   type RadarCreditOfferId,
 } from "@/lib/radar-credit";
+import type { AppLanguage } from "@/lib/language";
 import { redeemRadarTokenCode, type RadarUsageStatus } from "@/lib/radar";
 import { cn } from "@/lib/utils";
+import { useLanguageStore } from "@/store/use-language-store";
 import type { RadarPaymentMethod } from "@/types/supabase";
 
 interface RadarCreditsModalProps {
@@ -50,7 +53,85 @@ function StatusPill({ label }: { label: string }) {
   return <div className="rounded-full bg-black/10 px-3 py-1 text-xs font-medium text-foreground/88">{label}</div>;
 }
 
+function getRadarCreditsCopy(language: AppLanguage) {
+  return language === "en"
+    ? {
+        activationImpossible: "Activation is unavailable.",
+        closeRadarTokens: "Close Radar tokens",
+        title: "Radar Tokens",
+        subtitle: "Buy a pack or activate a code without leaving Radar.",
+        thisWeek: "This week",
+        tokens: "Tokens",
+        nextRadarUsesToken: "Next Radar: 1 token",
+        nextRadarBlocked: "Next Radar: blocked",
+        nextRadarFree: "Next Radar: free",
+        freeQuotaDoneTitle: "This week's free quota is over.",
+        freeQuotaDoneHint: "Choose a pack, pay, confirm on WhatsApp, then activate the code you receive.",
+        choosePack: "Choose a pack",
+        choosePackHint: "2 free tries per week, then 1 token = 1 analysis.",
+        tokensUnit: "tokens",
+        perToken: "per token",
+        saveAmount: "save",
+        chosenPack: "Chosen pack",
+        unitBase: "Unit base",
+        bringsTo: "This pack brings the token down to",
+        manualPaymentHint: "Manual payment, WhatsApp confirmation, then activation with a one-time code.",
+        forTokens: "for",
+        pay: "Pay",
+        confirm: "Confirm",
+        waveHintStart: "Copy the number, pay",
+        waveHintEnd: "then confirm on WhatsApp.",
+        numberCopied: "Number copied",
+        copy: "Copy",
+        confirmWhatsapp: "Confirm on WhatsApp",
+        copyFailed: "Copy is unavailable right now.",
+        activateCode: "Activate a code",
+        activateCodeHint: "Paste the code you received here to credit your tokens.",
+        activating: "Activating...",
+        activate: "Activate",
+        tokensAdded: "token(s) added. Current balance:",
+      }
+    : {
+        activationImpossible: "Activation impossible.",
+        closeRadarTokens: "Fermer les jetons Radar",
+        title: "Jetons Radar",
+        subtitle: "Acheter un pack ou activer un code sans quitter Radar.",
+        thisWeek: "Cette semaine",
+        tokens: "Jetons",
+        nextRadarUsesToken: "Prochain radar: 1 jeton",
+        nextRadarBlocked: "Prochain radar: bloque",
+        nextRadarFree: "Prochain radar: gratuit",
+        freeQuotaDoneTitle: "Le quota gratuit de la semaine est termine.",
+        freeQuotaDoneHint: "Choisis un pack, paie, confirme via WhatsApp, puis active le code que tu recevras.",
+        choosePack: "Choisir un pack",
+        choosePackHint: "2 essais gratuits par semaine, puis 1 jeton = 1 analyse.",
+        tokensUnit: "jetons",
+        perToken: "FCFA / jeton",
+        saveAmount: "economie",
+        chosenPack: "Pack choisi",
+        unitBase: "Base unitaire",
+        bringsTo: "Ce pack ramene le jeton a",
+        manualPaymentHint: "Paiement manuel, confirmation WhatsApp, puis activation avec un code a usage unique.",
+        forTokens: "pour",
+        pay: "Payer",
+        confirm: "Confirmer",
+        waveHintStart: "Copie le numero, paie",
+        waveHintEnd: "puis confirme via WhatsApp.",
+        numberCopied: "Numero copie",
+        copy: "Copier",
+        confirmWhatsapp: "Confirmer via WhatsApp",
+        copyFailed: "Copie impossible pour le moment.",
+        activateCode: "Activer un code",
+        activateCodeHint: "Colle ici le code que tu as recu pour crediter tes jetons.",
+        activating: "Activation...",
+        activate: "Activer",
+        tokensAdded: "jeton(s) ajoutes. Solde actuel:",
+      };
+}
+
 export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, onRedeemed }: RadarCreditsModalProps) {
+  const language = useLanguageStore((state) => state.language);
+  const copy = getRadarCreditsCopy(language);
   const [selectedOfferId, setSelectedOfferId] = useState<RadarCreditOfferId>("pulse");
   const [waveCopyState, setWaveCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [redeemCode, setRedeemCode] = useState("");
@@ -111,10 +192,10 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
     try {
       const result = await redeemRadarTokenCode(redeemCode);
       setRedeemCode("");
-      setRedeemMessage(`${result.redeemedTokenCount} jeton(s) ajoutes. Solde actuel: ${result.tokenBalance}.`);
+      setRedeemMessage(`${result.redeemedTokenCount} ${copy.tokensAdded} ${result.tokenBalance}.`);
       await onRedeemed?.();
     } catch (nextError) {
-      setRedeemError(nextError instanceof Error ? nextError.message : "Activation impossible.");
+      setRedeemError(nextError instanceof Error ? nextError.message : copy.activationImpossible);
     } finally {
       setIsRedeeming(false);
     }
@@ -126,7 +207,7 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
         <>
           <motion.button
             type="button"
-            aria-label="Fermer les jetons Radar"
+            aria-label={copy.closeRadarTokens}
             className="fixed inset-0 z-[60] bg-background/64 backdrop-blur-md"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -147,10 +228,8 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
 
               <div className="mt-4 flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-base font-semibold text-foreground">Jetons Radar</p>
-                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                    Acheter un pack ou activer un code sans quitter Radar.
-                  </p>
+                  <p className="text-base font-semibold text-foreground">{copy.title}</p>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">{copy.subtitle}</p>
                 </div>
 
                 <button
@@ -163,33 +242,31 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
-                <StatusPill label={`Cette semaine ${usageStatus?.usedCount ?? 0}/${usageStatus?.limit ?? 2}`} />
-                <StatusPill label={`Jetons ${usageStatus?.tokenBalance ?? 0}`} />
+                <StatusPill label={`${copy.thisWeek} ${usageStatus?.usedCount ?? 0}/${usageStatus?.limit ?? 2}`} />
+                <StatusPill label={`${copy.tokens} ${usageStatus?.tokenBalance ?? 0}`} />
                 <StatusPill
                   label={
                     usageStatus?.nextAccessMode === "token"
-                      ? "Prochain radar: 1 jeton"
+                      ? copy.nextRadarUsesToken
                       : usageStatus?.nextAccessMode === "blocked"
-                        ? "Prochain radar: bloque"
-                        : "Prochain radar: gratuit"
+                        ? copy.nextRadarBlocked
+                        : copy.nextRadarFree
                   }
                 />
               </div>
 
               {isBlocked ? (
                 <div className="mt-4 rounded-[18px] border border-warning/24 bg-warning/10 px-4 py-4">
-                  <p className="text-sm font-medium text-foreground">Le quota gratuit de la semaine est termine.</p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    Choisis un pack, paie, confirme via WhatsApp, puis active le code que tu recevras.
-                  </p>
+                  <p className="text-sm font-medium text-foreground">{copy.freeQuotaDoneTitle}</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.freeQuotaDoneHint}</p>
                 </div>
               ) : null}
 
               <div className="mt-5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-foreground">Choisir un pack</p>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">2 essais gratuits par semaine, puis 1 jeton = 1 analyse.</p>
+                    <p className="text-sm font-semibold text-foreground">{copy.choosePack}</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.choosePackHint}</p>
                   </div>
 
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/10 text-primary">
@@ -214,12 +291,12 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
                         onClick={() => setSelectedOfferId(offer.id)}
                       >
                         <p className="text-sm font-semibold text-foreground">{offer.label}</p>
-                        <p className="mt-1 text-xs leading-5 text-muted-foreground">{offer.tagline}</p>
-                        <p className="mt-3 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{offer.tokenCount} jetons</p>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">{getRadarCreditOfferTagline(offer.id, language)}</p>
+                        <p className="mt-3 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{offer.tokenCount} {copy.tokensUnit}</p>
                         <p className="mt-1 text-sm font-medium text-foreground">{offer.amountFcfa} FCFA</p>
                         <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
-                          {offer.unitPriceFcfa} FCFA / jeton
-                          {offer.savingsFcfa > 0 ? ` - economie ${offer.savingsFcfa} FCFA` : ""}
+                          {language === "en" ? `${offer.unitPriceFcfa} FCFA / token` : `${offer.unitPriceFcfa} ${copy.perToken}`}
+                          {offer.savingsFcfa > 0 ? ` - ${copy.saveAmount} ${offer.savingsFcfa} FCFA` : ""}
                         </p>
                       </button>
                     );
@@ -227,16 +304,14 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
                 </div>
 
                 <div className="mt-4 rounded-[18px] border border-white/6 bg-white/4 px-4 py-3">
-                  <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Pack choisi</p>
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">{copy.chosenPack}</p>
                   <p className="mt-1 text-base font-semibold text-foreground">
-                    {selectedOffer.label} - {selectedOffer.tokenCount} jetons - {selectedOffer.amountFcfa} FCFA
+                    {selectedOffer.label} - {selectedOffer.tokenCount} {copy.tokensUnit} - {selectedOffer.amountFcfa} FCFA
                   </p>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    Base unitaire {RADAR_TOKEN_UNIT_PRICE_FCFA} FCFA. Ce pack ramene le jeton a {selectedOffer.unitPriceFcfa} FCFA.
+                    {copy.unitBase} {RADAR_TOKEN_UNIT_PRICE_FCFA} FCFA. {copy.bringsTo} {selectedOffer.unitPriceFcfa} FCFA.
                   </p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    Paiement manuel, confirmation WhatsApp, puis activation avec un code a usage unique.
-                  </p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.manualPaymentHint}</p>
                 </div>
               </div>
 
@@ -246,7 +321,7 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
                   const confirmHref = buildRadarPurchaseWhatsAppHref({
                     email: sessionEmail,
                     paymentMethod,
-                    offerLabel: `${selectedOffer.label} - ${selectedOffer.tokenCount} jetons`,
+                    offerLabel: `${selectedOffer.label} - ${selectedOffer.tokenCount} ${copy.tokensUnit}`,
                     tokenCount: selectedOffer.tokenCount,
                     amountFcfa: selectedOffer.amountFcfa,
                   });
@@ -263,7 +338,7 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
                     >
                       <p className="text-sm font-semibold text-foreground">{radarPaymentMethodLabels[paymentMethod]}</p>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        {selectedOffer.amountFcfa} FCFA pour {selectedOffer.tokenCount} jetons.
+                        {selectedOffer.amountFcfa} FCFA {copy.forTokens} {selectedOffer.tokenCount} {copy.tokensUnit}.
                       </p>
 
                       <div className="mt-4 grid grid-cols-2 gap-3">
@@ -277,7 +352,7 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
                               : "bg-[#ffd248] text-[#332400] hover:bg-[#ffdc6f]",
                           )}
                         >
-                          Payer
+                          {copy.pay}
                         </a>
 
                         <a
@@ -287,7 +362,7 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
                           className={cn(buttonVariants({ variant: "secondary", size: "default" }), "justify-center rounded-[16px]")}
                         >
                           <MessageCircle className="mr-2 h-4 w-4" />
-                          Confirmer
+                          {copy.confirm}
                         </a>
                       </div>
                     </div>
@@ -299,7 +374,7 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
                     <div>
                       <p className="text-sm font-semibold text-foreground">Wave</p>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Copie le numero, paie {selectedOffer.amountFcfa} FCFA, puis confirme via WhatsApp.
+                        {copy.waveHintStart} {selectedOffer.amountFcfa} FCFA, {copy.waveHintEnd}
                       </p>
                     </div>
 
@@ -317,12 +392,12 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
                       {waveCopyState === "copied" ? (
                         <>
                           <Check className="mr-2 h-4 w-4" />
-                          Numero copie
+                          {copy.numberCopied}
                         </>
                       ) : (
                         <>
                           <Copy className="mr-2 h-4 w-4" />
-                          Copier
+                          {copy.copy}
                         </>
                       )}
                     </Button>
@@ -332,7 +407,7 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
                     href={buildRadarPurchaseWhatsAppHref({
                       email: sessionEmail,
                       paymentMethod: "wave",
-                      offerLabel: `${selectedOffer.label} - ${selectedOffer.tokenCount} jetons`,
+                      offerLabel: `${selectedOffer.label} - ${selectedOffer.tokenCount} ${copy.tokensUnit}`,
                       tokenCount: selectedOffer.tokenCount,
                       amountFcfa: selectedOffer.amountFcfa,
                     })}
@@ -341,20 +416,18 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
                     className={cn(buttonVariants({ variant: "secondary", size: "default" }), "mt-4 flex w-full justify-center rounded-[16px]")}
                   >
                     <MessageCircle className="mr-2 h-4 w-4" />
-                    Confirmer via WhatsApp
+                    {copy.confirmWhatsapp}
                   </a>
 
-                  {waveCopyState === "error" ? <p className="mt-3 text-xs text-negative/90">Copie impossible pour le moment.</p> : null}
+                  {waveCopyState === "error" ? <p className="mt-3 text-xs text-negative/90">{copy.copyFailed}</p> : null}
                 </div>
               </div>
 
               <form className="mt-5 rounded-[22px] border border-primary/18 bg-primary/8 px-4 py-4" onSubmit={handleRedeemCode}>
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-foreground">Activer un code</p>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      Colle ici le code que tu as recu pour crediter tes jetons.
-                    </p>
+                    <p className="text-sm font-semibold text-foreground">{copy.activateCode}</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.activateCodeHint}</p>
                   </div>
 
                   <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/10 text-primary">
@@ -369,7 +442,7 @@ export function RadarCreditsModal({ isOpen, onClose, usageStatus, sessionEmail, 
                     onChange={(event) => setRedeemCode(sanitizeCodeInput(event.target.value))}
                   />
                   <Button type="submit" disabled={isRedeeming}>
-                    {isRedeeming ? "Activation..." : "Activer"}
+                    {isRedeeming ? copy.activating : copy.activate}
                   </Button>
                 </div>
 

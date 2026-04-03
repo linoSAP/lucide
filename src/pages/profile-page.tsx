@@ -188,8 +188,8 @@ export function ProfilePage() {
     ? adminSelectedOffer.amountFcfa
     : Math.max(1, Number.parseInt(adminCustomAmountFcfa || "0", 10) || 0);
   const adminOfferLabel = adminSelectedOffer
-    ? `${adminSelectedOffer.label} (${adminSelectedOffer.tokenCount} jetons)`
-    : "Pack personnalise";
+    ? `${adminSelectedOffer.label} (${adminSelectedOffer.tokenCount} ${copy.profile.tokensUnit})`
+    : copy.profile.customPack;
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -285,7 +285,7 @@ export function ProfilePage() {
       setAdminCopyState("idle");
       setIsAdminGeneratorOpen(true);
     } catch (nextError) {
-      setAdminError(nextError instanceof Error ? nextError.message : "Acces admin impossible.");
+      setAdminError(nextError instanceof Error ? nextError.message : copy.profile.adminUnavailable);
     } finally {
       setIsAuthenticatingAdmin(false);
     }
@@ -306,11 +306,11 @@ export function ProfilePage() {
       });
 
       setGeneratedAdminCode(payload);
-      setAdminGenerateMessage("Code genere. Tu peux maintenant l'envoyer manuellement au client via WhatsApp.");
+      setAdminGenerateMessage(copy.profile.codeGenerated);
       setAdminCopyState("idle");
     } catch (nextError) {
       setGeneratedAdminCode(null);
-      setAdminGenerateError(nextError instanceof Error ? nextError.message : "Generation impossible.");
+      setAdminGenerateError(nextError instanceof Error ? nextError.message : copy.profile.generationUnavailable);
     } finally {
       setIsGeneratingAdminCode(false);
     }
@@ -692,7 +692,7 @@ export function ProfilePage() {
         <>
           <button
             type="button"
-            aria-label="Fermer l'acces admin"
+            aria-label={copy.profile.adminAccessClose}
             className="fixed inset-0 z-40 bg-background/56 backdrop-blur-md"
             onClick={() => {
               setIsAdminPromptOpen(false);
@@ -706,14 +706,14 @@ export function ProfilePage() {
               <div className="mx-auto h-1.5 w-12 rounded-full bg-white/10" />
 
               <div className="mt-4">
-                <p className="text-base font-semibold text-foreground">Acces admin Radar</p>
-                <p className="mt-1 text-sm text-muted-foreground">Mot de passe requis pour ouvrir l'espace de generation.</p>
+                <p className="text-base font-semibold text-foreground">{copy.profile.adminAccessTitle}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{copy.profile.adminAccessDescription}</p>
               </div>
 
               <form className="mt-5 space-y-3" onSubmit={handleAdminLogin}>
                 <Input
                   type="password"
-                  placeholder="Mot de passe admin"
+                  placeholder={copy.profile.adminPasswordPlaceholder}
                   value={adminPassword}
                   onChange={(event) => setAdminPassword(event.target.value)}
                 />
@@ -730,10 +730,10 @@ export function ProfilePage() {
                       setAdminError(null);
                     }}
                   >
-                    Annuler
+                    {copy.profile.cancel}
                   </Button>
                   <Button type="submit" disabled={isAuthenticatingAdmin}>
-                    {isAuthenticatingAdmin ? "Ouverture..." : "Ouvrir"}
+                    {isAuthenticatingAdmin ? copy.profile.opening : copy.profile.open}
                   </Button>
                 </div>
               </form>
@@ -746,7 +746,7 @@ export function ProfilePage() {
         <>
           <button
             type="button"
-            aria-label="Fermer le generateur admin"
+            aria-label={copy.profile.adminGeneratorClose}
             className="fixed inset-0 z-40 bg-background/64 backdrop-blur-md"
             onClick={() => {
               void handleCloseAdminGenerator();
@@ -759,10 +759,8 @@ export function ProfilePage() {
 
               <div className="mt-4 flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-base font-semibold text-foreground">Generateur admin Radar</p>
-                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                    Espace cache pour preparer un code a usage unique a renvoyer manuellement au client.
-                  </p>
+                  <p className="text-base font-semibold text-foreground">{copy.profile.adminGeneratorTitle}</p>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">{copy.profile.adminGeneratorDescription}</p>
                 </div>
 
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-warning/12 text-warning">
@@ -773,7 +771,7 @@ export function ProfilePage() {
               <div className="mt-5 grid gap-3">
                 <Input
                   type="email"
-                  placeholder="Email utilisateur"
+                  placeholder={copy.profile.userEmailPlaceholder}
                   value={adminEmail}
                   onChange={(event) => setAdminEmail(event.target.value)}
                 />
@@ -781,23 +779,23 @@ export function ProfilePage() {
                 <Select value={adminOfferId} onChange={(event) => setAdminOfferId(event.target.value as RadarCreditOfferId | "custom")}>
                   {radarCreditOffers.map((offer) => (
                     <option key={offer.id} value={offer.id}>
-                      {offer.label} - {offer.tokenCount} jetons - {offer.amountFcfa} FCFA
+                      {offer.label} - {offer.tokenCount} {copy.profile.tokensUnit} - {offer.amountFcfa} FCFA
                     </option>
                   ))}
-                  <option value="custom">Pack personnalise</option>
+                  <option value="custom">{copy.profile.customPack}</option>
                 </Select>
 
                 {adminOfferId === "custom" ? (
                   <div className="grid grid-cols-2 gap-3">
                     <Input
                       inputMode="numeric"
-                      placeholder="Jetons"
+                      placeholder={copy.profile.tokensPlaceholder}
                       value={adminCustomTokenCount}
                       onChange={(event) => setAdminCustomTokenCount(event.target.value.replace(/\D/g, "").slice(0, 3))}
                     />
                     <Input
                       inputMode="numeric"
-                      placeholder="Montant FCFA"
+                      placeholder={copy.profile.amountFcfaPlaceholder}
                       value={adminCustomAmountFcfa}
                       onChange={(event) => setAdminCustomAmountFcfa(event.target.value.replace(/\D/g, "").slice(0, 6))}
                     />
@@ -818,14 +816,14 @@ export function ProfilePage() {
                   <div>
                     <p className="text-sm font-semibold text-foreground">{adminOfferLabel}</p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      {adminTokenCount} jetons - {adminAmountFcfa} FCFA - {radarPaymentMethodLabels[adminPaymentMethod]}
+                      {adminTokenCount} {copy.profile.tokensUnit} - {adminAmountFcfa} FCFA - {radarPaymentMethodLabels[adminPaymentMethod]}
                     </p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground/90">
-                      Base actuelle: {RADAR_TOKEN_UNIT_PRICE_FCFA} FCFA par jeton.
+                      {copy.profile.currentUnitBase}: {RADAR_TOKEN_UNIT_PRICE_FCFA} FCFA {copy.profile.perToken}.
                     </p>
                   </div>
 
-                  <div className="rounded-full bg-black/10 px-3 py-1 text-xs font-medium text-foreground/88">Usage unique</div>
+                  <div className="rounded-full bg-black/10 px-3 py-1 text-xs font-medium text-foreground/88">{copy.profile.oneTimeUse}</div>
                 </div>
               </div>
 
@@ -837,16 +835,16 @@ export function ProfilePage() {
               <div className="mt-4 grid grid-cols-2 gap-3">
                 <Button variant="ghost" type="button" onClick={() => void handleCloseAdminGenerator()} disabled={isClosingAdminGenerator}>
                   <LogOut className="mr-2 h-4 w-4" />
-                  {isClosingAdminGenerator ? "Fermeture..." : "Fermer l'acces"}
+                  {isClosingAdminGenerator ? copy.profile.closing : copy.profile.closeAccess}
                 </Button>
                 <Button type="button" onClick={handleGenerateAdminCode} disabled={isGeneratingAdminCode}>
-                  {isGeneratingAdminCode ? "Generation..." : "Generer le code"}
+                  {isGeneratingAdminCode ? copy.profile.generating : copy.profile.generateCode}
                 </Button>
               </div>
 
               {generatedAdminCode ? (
                 <div className="mt-4 rounded-[24px] border border-primary/18 bg-primary/8 px-4 py-4 shadow-soft">
-                  <p className="text-sm font-semibold text-foreground">Code pret a envoyer</p>
+                  <p className="text-sm font-semibold text-foreground">{copy.profile.codeReadyToSend}</p>
 
                   <div className="mt-3 rounded-[18px] border border-white/8 bg-black/10 px-4 py-4 text-center text-base font-semibold tracking-[0.16em] text-foreground">
                     {generatedAdminCode.code}
@@ -855,28 +853,28 @@ export function ProfilePage() {
                   <div className="mt-4 grid gap-2 text-sm text-muted-foreground">
                     <p>{generatedAdminCode.email}</p>
                     <p>
-                      {generatedAdminCode.tokenCount} jetons - {generatedAdminCode.amountFcfa} FCFA -{" "}
+                      {generatedAdminCode.tokenCount} {copy.profile.tokensUnit} - {generatedAdminCode.amountFcfa} FCFA -{" "}
                       {radarPaymentMethodLabels[generatedAdminCode.paymentMethod]}
                     </p>
-                    <p>Expire le {formatDateTime(generatedAdminCode.expiresAt)}</p>
+                    <p>{copy.profile.expiresOn} {formatDateTime(generatedAdminCode.expiresAt)}</p>
                   </div>
 
                   <Button variant="secondary" className="mt-4 w-full rounded-[16px]" onClick={handleCopyAdminCode}>
                     {adminCopyState === "copied" ? (
                       <>
                         <Check className="mr-2 h-4 w-4" />
-                        Code copie
+                        {copy.profile.codeCopied}
                       </>
                     ) : (
                       <>
                         <Copy className="mr-2 h-4 w-4" />
-                        Copier le code
+                        {copy.profile.copyCode}
                       </>
                     )}
                   </Button>
 
                   {adminCopyState === "error" ? (
-                    <p className="mt-3 text-xs text-negative/90">Copie impossible pour le moment.</p>
+                    <p className="mt-3 text-xs text-negative/90">{copy.profile.adminCopyFailed}</p>
                   ) : null}
                 </div>
               ) : null}

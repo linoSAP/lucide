@@ -1,3 +1,4 @@
+import { getStoredLanguagePreference } from "@/lib/language";
 import type { RadarPaymentMethod } from "@/types/supabase";
 import { normalizeErrorMessage } from "@/lib/utils";
 
@@ -11,7 +12,26 @@ export interface RadarAdminCodePayload {
   expiresAt: string;
 }
 
-async function readJsonOrThrow(response: Response) {
+function getRadarAdminCopy() {
+  return getStoredLanguagePreference() === "en"
+    ? {
+        adminUnavailable: "Admin action is unavailable right now.",
+        generationUnavailable: "Generation is unavailable right now.",
+      }
+    : {
+        adminUnavailable: "Operation admin impossible pour le moment.",
+        generationUnavailable: "Generation impossible pour le moment.",
+      };
+}
+
+function buildAdminRequestHeaders() {
+  return {
+    "Content-Type": "application/json",
+    "x-app-language": getStoredLanguagePreference(),
+  };
+}
+
+async function readJsonOrThrow(response: Response, fallbackMessage = getRadarAdminCopy().adminUnavailable) {
   const rawText = await response.text();
   let payload: { error?: string } | null = null;
 
@@ -23,7 +43,7 @@ async function readJsonOrThrow(response: Response) {
 
   if (!response.ok) {
     const message = payload?.error ?? rawText;
-    throw new Error(normalizeErrorMessage(message || rawText, "Operation admin impossible pour le moment."));
+    throw new Error(normalizeErrorMessage(message || rawText, fallbackMessage));
   }
 
   return payload;
@@ -32,9 +52,7 @@ async function readJsonOrThrow(response: Response) {
 export async function loginRadarAdmin(password: string) {
   const response = await fetch("/api/admin/radar/login", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: buildAdminRequestHeaders(),
     credentials: "include",
     body: JSON.stringify({ password }),
   });
@@ -45,6 +63,9 @@ export async function loginRadarAdmin(password: string) {
 export async function logoutRadarAdmin() {
   const response = await fetch("/api/admin/radar/logout", {
     method: "POST",
+    headers: {
+      "x-app-language": getStoredLanguagePreference(),
+    },
     credentials: "include",
   });
 
@@ -54,6 +75,9 @@ export async function logoutRadarAdmin() {
 export async function getRadarAdminSession() {
   const response = await fetch("/api/admin/radar/session", {
     method: "GET",
+    headers: {
+      "x-app-language": getStoredLanguagePreference(),
+    },
     credentials: "include",
   });
 
@@ -72,19 +96,18 @@ export async function generateRadarTokenCode(input: {
   paymentMethod: RadarPaymentMethod;
   offerLabel: string;
 }) {
+  const copy = getRadarAdminCopy();
   const response = await fetch("/api/admin/radar/generate-code", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: buildAdminRequestHeaders(),
     credentials: "include",
     body: JSON.stringify(input),
   });
 
-  const payload = (await readJsonOrThrow(response)) as RadarAdminCodePayload | null;
+  const payload = (await readJsonOrThrow(response, copy.adminUnavailable)) as RadarAdminCodePayload | null;
 
   if (!payload) {
-    throw new Error("Generation impossible pour le moment.");
+    throw new Error(copy.generationUnavailable);
   }
 
   return payload;

@@ -1,3 +1,4 @@
+import { getStoredLanguagePreference, type AppLanguage } from "@/lib/language";
 import type { RadarPaymentMethod } from "@/types/supabase";
 
 export const radarPaymentRecipients: Record<RadarPaymentMethod, string> = {
@@ -65,8 +66,31 @@ export const radarCreditOffers = [
 export type RadarCreditOffer = (typeof radarCreditOffers)[number];
 export type RadarCreditOfferId = RadarCreditOffer["id"];
 
+function getActiveLanguage() {
+  return getStoredLanguagePreference();
+}
+
 export function getRadarCreditOffer(offerId: string) {
   return radarCreditOffers.find((offer) => offer.id === offerId) ?? radarCreditOffers[0];
+}
+
+export function getRadarCreditOfferTagline(offerId: RadarCreditOfferId, language: AppLanguage = getActiveLanguage()) {
+  const taglines = {
+    fr: {
+      solo: "Le point d'entree simple",
+      starter: "3 analyses avec remise pack",
+      pulse: "Le meilleur equilibre pour la cadence",
+      pro: "Le gros pack avec remise forte",
+    },
+    en: {
+      solo: "The simple starting point",
+      starter: "3 analyses with a pack discount",
+      pulse: "The best balance for steady use",
+      pro: "The large pack with the strongest discount",
+    },
+  } as const;
+
+  return taglines[language][offerId];
 }
 
 export function buildDialHref(code: string) {
@@ -102,13 +126,15 @@ export function buildRadarPurchaseWhatsAppMessage(options: {
   tokenCount: number;
   amountFcfa: number;
 }) {
+  const isEnglish = getActiveLanguage() === "en";
+
   return [
-    "Bonjour, je confirme mon paiement Radar Lucide.",
+    isEnglish ? "Hello, I confirm my Lucide Radar payment." : "Bonjour, je confirme mon paiement Radar Lucide.",
     `Email: ${options.email}`,
-    `Forfait: ${options.offerLabel}`,
-    `Jetons: ${options.tokenCount}`,
-    `Montant: ${options.amountFcfa} FCFA`,
-    `Paiement: ${radarPaymentMethodLabels[options.paymentMethod]}`,
+    `${isEnglish ? "Pack" : "Forfait"}: ${options.offerLabel}`,
+    `${isEnglish ? "Tokens" : "Jetons"}: ${options.tokenCount}`,
+    `${isEnglish ? "Amount" : "Montant"}: ${options.amountFcfa} FCFA`,
+    `${isEnglish ? "Payment" : "Paiement"}: ${radarPaymentMethodLabels[options.paymentMethod]}`,
   ].join("\n");
 }
 

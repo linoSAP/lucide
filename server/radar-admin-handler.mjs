@@ -5,6 +5,33 @@ const ADMIN_SESSION_TTL_SECONDS = 60 * 60 * 12;
 const RADAR_CODE_EXPIRY_DAYS = 30;
 const allowedPaymentMethods = new Set(["orange_money", "mobile_money", "wave"]);
 
+function getAppLanguage(headers) {
+  const requestedLanguage = getHeaderValue(headers, "x-app-language").trim().toLowerCase();
+  return requestedLanguage === "en" ? "en" : "fr";
+}
+
+function getRadarAdminCopy(language) {
+  return language === "en"
+    ? {
+        serverConfigMissing: "Configure RADAR_ADMIN_PASSWORD and RADAR_ADMIN_SESSION_SECRET on the server.",
+        invalidPassword: "Invalid admin password.",
+        invalidSession: "Invalid admin session.",
+        supabaseConfigMissing: "Configure VITE_SUPABASE_URL or SUPABASE_URL, then SUPABASE_SERVICE_ROLE_KEY, to generate codes.",
+        invalidUserEmail: "Invalid user email.",
+        invalidPaymentMethod: "Invalid payment method.",
+        invalidAmountOrTokens: "Invalid amount or token count.",
+      }
+    : {
+        serverConfigMissing: "Configure RADAR_ADMIN_PASSWORD et RADAR_ADMIN_SESSION_SECRET cote serveur.",
+        invalidPassword: "Mot de passe admin invalide.",
+        invalidSession: "Session admin invalide.",
+        supabaseConfigMissing: "Configure VITE_SUPABASE_URL ou SUPABASE_URL, puis SUPABASE_SERVICE_ROLE_KEY pour generer des codes.",
+        invalidUserEmail: "Email utilisateur invalide.",
+        invalidPaymentMethod: "Moyen de paiement invalide.",
+        invalidAmountOrTokens: "Montant ou nombre de jetons invalide.",
+      };
+}
+
 function sendJson(response, status, payload, extraHeaders = {}) {
   response.statusCode = status;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -215,6 +242,8 @@ async function processRadarAdminRequest({
 }) {
   const pathname = getPathnameFromUrl(requestUrl);
   const signingSecret = adminSessionSecret || adminPassword;
+  const language = getAppLanguage(headers);
+  const copy = getRadarAdminCopy(language);
 
   if (!pathname.startsWith("/api/admin/radar")) {
     return null;
@@ -224,7 +253,7 @@ async function processRadarAdminRequest({
     return {
       status: 500,
       payload: {
-        error: "Configure RADAR_ADMIN_PASSWORD et RADAR_ADMIN_SESSION_SECRET cote serveur.",
+        error: copy.serverConfigMissing,
       },
     };
   }
@@ -244,7 +273,7 @@ async function processRadarAdminRequest({
     const submittedPassword = typeof parsedBody?.password === "string" ? parsedBody.password : "";
 
     if (submittedPassword !== adminPassword) {
-      return { status: 401, payload: { error: "Mot de passe admin invalide." } };
+      return { status: 401, payload: { error: copy.invalidPassword } };
     }
 
     const expiresAt = Date.now() + ADMIN_SESSION_TTL_SECONDS * 1000;
@@ -276,13 +305,13 @@ async function processRadarAdminRequest({
     const session = await readAdminSession(headers, signingSecret);
 
     if (!session) {
-      return { status: 401, payload: { error: "Session admin invalide." } };
+      return { status: 401, payload: { error: copy.invalidSession } };
     }
 
     if (!supabaseUrl || !supabaseServiceRoleKey) {
       return {
         status: 500,
-        payload: { error: "Configure VITE_SUPABASE_URL ou SUPABASE_URL, puis SUPABASE_SERVICE_ROLE_KEY pour generer des codes." },
+        payload: { error: copy.supabaseConfigMissing },
       };
     }
 
@@ -294,15 +323,15 @@ async function processRadarAdminRequest({
     const offerLabel = normalizeSafeLabel(parsedBody?.offerLabel);
 
     if (!email || !email.includes("@")) {
-      return { status: 400, payload: { error: "Email utilisateur invalide." } };
+      return { status: 400, payload: { error: copy.invalidUserEmail } };
     }
 
     if (!allowedPaymentMethods.has(paymentMethod)) {
-      return { status: 400, payload: { error: "Moyen de paiement invalide." } };
+      return { status: 400, payload: { error: copy.invalidPaymentMethod } };
     }
 
     if (amountFcfa <= 0 || tokenCount <= 0) {
-      return { status: 400, payload: { error: "Montant ou nombre de jetons invalide." } };
+      return { status: 400, payload: { error: copy.invalidAmountOrTokens } };
     }
 
     const plainCode = buildRandomRadarCode();

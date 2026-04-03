@@ -1,12 +1,26 @@
 import { useEffect, useState } from "react";
 import { listBets } from "@/lib/bets";
+import { type AppLanguage } from "@/lib/language";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { getErrorMessage } from "@/lib/utils";
 import { useAuthStore } from "@/store/use-auth-store";
+import { useLanguageStore } from "@/store/use-language-store";
 import type { BetRow } from "@/types/supabase";
+
+function getUseBetsCopy(language: AppLanguage) {
+  return language === "en"
+    ? {
+        loadFailed: "Unable to load bets.",
+      }
+    : {
+        loadFailed: "Impossible de charger les mises.",
+      };
+}
 
 export function useBets(limit?: number) {
   const session = useAuthStore((state) => state.session);
+  const language = useLanguageStore((state) => state.language);
+  const copy = getUseBetsCopy(language);
   const [bets, setBets] = useState<BetRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +40,7 @@ export function useBets(limit?: number) {
       setBets(data);
       setError(null);
     } catch (error) {
-      setError(getErrorMessage(error, "Impossible de charger les mises."));
+      setError(getErrorMessage(error, copy.loadFailed));
     } finally {
       setIsLoading(false);
     }
@@ -58,7 +72,7 @@ export function useBets(limit?: number) {
           return;
         }
 
-        setError(getErrorMessage(error, "Impossible de charger les mises."));
+        setError(getErrorMessage(error, copy.loadFailed));
       })
       .finally(() => {
         if (active) {
@@ -69,7 +83,7 @@ export function useBets(limit?: number) {
     return () => {
       active = false;
     };
-  }, [limit, session?.user?.id]);
+  }, [copy.loadFailed, limit, session?.user?.id]);
 
   return { bets, isLoading, error, refresh };
 }

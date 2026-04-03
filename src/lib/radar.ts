@@ -1,4 +1,5 @@
 import { getSupabaseOrThrow, isSupabaseConfigured } from "@/lib/supabase";
+import { getStoredLanguagePreference, type AppLanguage } from "@/lib/language";
 import type { RadarAccessMode } from "@/types/supabase";
 import { normalizeErrorMessage } from "@/lib/utils";
 
@@ -17,21 +18,18 @@ const doualaDateFormatter = new Intl.DateTimeFormat("en-CA", {
 export const radarRiskLevels = [
   {
     value: "prudent",
-    label: "Prudent",
     color: "#00E676",
     borderColor: "rgba(0, 230, 118, 0.28)",
     backgroundColor: "rgba(0, 230, 118, 0.08)",
   },
   {
     value: "balanced",
-    label: "Équilibré",
     color: "#FFB020",
     borderColor: "rgba(255, 176, 32, 0.28)",
     backgroundColor: "rgba(255, 176, 32, 0.08)",
   },
   {
     value: "aggressive",
-    label: "Agressif",
     color: "#FF5252",
     borderColor: "rgba(255, 82, 82, 0.28)",
     backgroundColor: "rgba(255, 82, 82, 0.08)",
@@ -100,11 +98,13 @@ export interface RadarRequestInput {
   startDate: string;
   endDate: string;
   historySummary?: string;
+  language?: AppLanguage;
 }
 
 export interface RadarDisciplineRequestInput {
   statsSummary: string;
   recentResults?: string[];
+  language?: AppLanguage;
 }
 
 export interface RadarTokenRedemptionResult {
@@ -112,12 +112,74 @@ export interface RadarTokenRedemptionResult {
   redeemedTokenCount: number;
 }
 
+function getRadarLanguage() {
+  return getStoredLanguagePreference();
+}
+
+function getRadarClientCopy(language: AppLanguage = getRadarLanguage()) {
+  return language === "en"
+    ? {
+        riskLabels: {
+          prudent: "Careful",
+          balanced: "Balanced",
+          aggressive: "Aggressive",
+        },
+        verifyQuota: "Unable to check Radar usage right now.",
+        verifyBalance: "Unable to check your Radar balance right now.",
+        signInToUse: "Sign in to use Radar.",
+        verifyWeeklyQuota: "Unable to verify this week's Radar usage.",
+        restoreAccess: "Unable to restore Radar access right now.",
+        enterCode: "Enter the code you received.",
+        supabaseMissing: "Supabase is not configured.",
+        signInToActivate: "Sign in to activate a code.",
+        invalidCode: "Invalid code.",
+        codeUsed: "This code has already been used.",
+        codeExpired: "This code has expired.",
+        codeOtherEmail: "This code is reserved for another email.",
+        validEmailRequired: "Your account must have a valid email.",
+        activateCodeUnavailable: "Unable to activate this code right now.",
+        invalidSession: "Your session is invalid. Sign in again.",
+        radarTimeout: "Radar took too long. Try the analysis again.",
+        radarNetwork: "Connection is unavailable right now. Check your connection and try the analysis again.",
+        radarFallback: "Unable to analyze right now.",
+        disciplineTimeout: "The discipline coach is taking too long. Try the analysis again.",
+        disciplineFallback: "Unable to analyze your discipline right now.",
+      }
+    : {
+        riskLabels: {
+          prudent: "Prudent",
+          balanced: "Équilibré",
+          aggressive: "Agressif",
+        },
+        verifyQuota: "Impossible de verifier le quota Radar pour le moment.",
+        verifyBalance: "Impossible de verifier le solde Radar pour le moment.",
+        signInToUse: "Connecte-toi pour utiliser Radar.",
+        verifyWeeklyQuota: "Impossible de verifier le quota Radar de la semaine.",
+        restoreAccess: "Impossible de restaurer l'acces Radar pour le moment.",
+        enterCode: "Entre le code que tu as recu.",
+        supabaseMissing: "Supabase n'est pas configure.",
+        signInToActivate: "Connecte-toi pour activer un code.",
+        invalidCode: "Code invalide.",
+        codeUsed: "Ce code a deja ete utilise.",
+        codeExpired: "Ce code a expire.",
+        codeOtherEmail: "Ce code est reserve a un autre email.",
+        validEmailRequired: "Ton compte doit avoir un email valide.",
+        activateCodeUnavailable: "Impossible d'activer ce code pour le moment.",
+        invalidSession: "Session invalide. Reconnecte-toi.",
+        radarTimeout: "Radar a pris trop de temps. Relance l'analyse.",
+        radarNetwork: "Connexion impossible pour le moment. Verifie ta connexion ou relance l'analyse.",
+        radarFallback: "Impossible d'analyser pour le moment.",
+        disciplineTimeout: "Le coach discipline prend trop de temps. Relance l'analyse.",
+        disciplineFallback: "Impossible d'analyser ta discipline pour le moment.",
+      };
+}
+
 export function getRiskMeta(risk: RadarRiskValue) {
   return radarRiskLevels.find((level) => level.value === risk) ?? radarRiskLevels[1];
 }
 
-export function getRiskLabel(risk: RadarRiskValue) {
-  return getRiskMeta(risk).label;
+export function getRiskLabel(risk: RadarRiskValue, language: AppLanguage = getRadarLanguage()) {
+  return getRadarClientCopy(language).riskLabels[risk];
 }
 
 function createRadarClientError(message: string, fallback: string) {
@@ -262,7 +324,7 @@ export async function getRadarUsageStatus(userId: string): Promise<RadarUsageSta
       return normalizeRadarUsageStatus(readLocalRadarUsageCount(userId, usedOn), usedOn, 0);
     }
 
-    throw createRadarClientError(error.message, "Impossible de verifier le quota Radar pour le moment.");
+    throw createRadarClientError(error.message, getRadarClientCopy().verifyQuota);
   }
 
   const { data: tokenBalanceValue, error: tokenBalanceError } = await client.rpc("get_radar_token_balance", {});
@@ -272,7 +334,7 @@ export async function getRadarUsageStatus(userId: string): Promise<RadarUsageSta
       return normalizeRadarUsageStatus(count ?? 0, usedOn, 0);
     }
 
-    throw createRadarClientError(tokenBalanceError.message, "Impossible de verifier le solde Radar pour le moment.");
+    throw createRadarClientError(tokenBalanceError.message, getRadarClientCopy().verifyBalance);
   }
 
   return normalizeRadarUsageStatus(count ?? 0, usedOn, Number(tokenBalanceValue ?? 0));
@@ -290,20 +352,20 @@ export async function claimRadarUsage(userId: string): Promise<RadarUsageReserva
 
   if (error) {
     if (error.message.includes("AUTH_REQUIRED")) {
-      throw new Error("Connecte-toi pour utiliser Radar.");
+      throw new Error(getRadarClientCopy().signInToUse);
     }
 
     if (isRadarUsageSchemaError(error.message)) {
       return claimLocalRadarUsage(userId, usedOn);
     }
 
-    throw createRadarClientError(error.message, "Impossible de verifier le quota Radar de la semaine.");
+    throw createRadarClientError(error.message, getRadarClientCopy().verifyWeeklyQuota);
   }
 
   const payload = Array.isArray(data) ? data[0] : data;
 
   if (!payload) {
-    throw new Error("Impossible de verifier le quota Radar de la semaine.");
+    throw new Error(getRadarClientCopy().verifyWeeklyQuota);
   }
 
   return {
@@ -352,19 +414,20 @@ export async function releaseRadarUsage(usageId: string, accessMode: RadarAccess
       return;
     }
 
-    throw createRadarClientError(error.message, "Impossible de restaurer l'acces Radar pour le moment.");
+    throw createRadarClientError(error.message, getRadarClientCopy().restoreAccess);
   }
 }
 
 export async function redeemRadarTokenCode(plainCode: string): Promise<RadarTokenRedemptionResult> {
   const normalizedCode = plainCode.trim().toUpperCase();
+  const copy = getRadarClientCopy();
 
   if (!normalizedCode) {
-    throw new Error("Entre le code que tu as recu.");
+    throw new Error(copy.enterCode);
   }
 
   if (!isSupabaseConfigured) {
-    throw new Error("Supabase n'est pas configure.");
+    throw new Error(copy.supabaseMissing);
   }
 
   const client = getSupabaseOrThrow();
@@ -374,40 +437,40 @@ export async function redeemRadarTokenCode(plainCode: string): Promise<RadarToke
     const normalizedMessage = error.message.toLowerCase();
 
     if (normalizedMessage.includes("auth_required")) {
-      throw new Error("Connecte-toi pour activer un code.");
+      throw new Error(copy.signInToActivate);
     }
 
     if (normalizedMessage.includes("code_required")) {
-      throw new Error("Entre le code que tu as recu.");
+      throw new Error(copy.enterCode);
     }
 
     if (normalizedMessage.includes("code_invalid")) {
-      throw new Error("Code invalide.");
+      throw new Error(copy.invalidCode);
     }
 
     if (normalizedMessage.includes("code_already_redeemed")) {
-      throw new Error("Ce code a deja ete utilise.");
+      throw new Error(copy.codeUsed);
     }
 
     if (normalizedMessage.includes("code_expired")) {
-      throw new Error("Ce code a expire.");
+      throw new Error(copy.codeExpired);
     }
 
     if (normalizedMessage.includes("code_email_mismatch")) {
-      throw new Error("Ce code est reserve a un autre email.");
+      throw new Error(copy.codeOtherEmail);
     }
 
     if (normalizedMessage.includes("email_required")) {
-      throw new Error("Ton compte doit avoir un email valide.");
+      throw new Error(copy.validEmailRequired);
     }
 
-    throw createRadarClientError(error.message, "Impossible d'activer ce code pour le moment.");
+    throw createRadarClientError(error.message, copy.activateCodeUnavailable);
   }
 
   const payload = Array.isArray(data) ? data[0] : data;
 
   if (!payload) {
-    throw new Error("Impossible d'activer ce code pour le moment.");
+    throw new Error(copy.activateCodeUnavailable);
   }
 
   return {
@@ -417,21 +480,23 @@ export async function redeemRadarTokenCode(plainCode: string): Promise<RadarToke
 }
 
 async function getRadarAccessToken() {
+  const copy = getRadarClientCopy();
+
   if (!isSupabaseConfigured) {
-    throw new Error("Supabase n'est pas configure.");
+    throw new Error(copy.supabaseMissing);
   }
 
   const client = getSupabaseOrThrow();
   const { data: sessionData, error: sessionError } = await client.auth.getSession();
 
   if (sessionError) {
-    throw createRadarClientError(sessionError.message, "Session invalide. Reconnecte-toi.");
+    throw createRadarClientError(sessionError.message, copy.invalidSession);
   }
 
   const accessToken = sessionData.session?.access_token;
 
   if (!accessToken) {
-    throw new Error("Session invalide. Reconnecte-toi.");
+    throw new Error(copy.invalidSession);
   }
 
   return accessToken;
@@ -444,6 +509,7 @@ async function postAuthorizedRadarRequest<TResponse>(options: {
   timeoutMessage: string;
   networkMessage: string;
   fallbackMessage: string;
+  language?: AppLanguage;
 }): Promise<TResponse> {
   const accessToken = await getRadarAccessToken();
 
@@ -457,6 +523,7 @@ async function postAuthorizedRadarRequest<TResponse>(options: {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${accessToken}`,
+        "x-app-language": options.language ?? getRadarLanguage(),
       },
       signal: controller.signal,
       body: JSON.stringify(options.body),
@@ -487,6 +554,7 @@ async function postAuthorizedRadarRequest<TResponse>(options: {
 }
 
 export async function fetchRadarSuggestions(input: RadarRequestInput): Promise<RadarResult> {
+  const copy = getRadarClientCopy(input.language);
   const payload = await postAuthorizedRadarRequest<{
     suggestions?: RadarSuggestion[];
     window?: RadarWindowInfo;
@@ -495,9 +563,10 @@ export async function fetchRadarSuggestions(input: RadarRequestInput): Promise<R
     path: "/api/radar",
     body: input,
     timeoutMs: RADAR_REQUEST_TIMEOUT_MS,
-    timeoutMessage: "Radar a pris trop de temps. Relance l'analyse.",
-    networkMessage: "Connexion impossible pour le moment. Verifie ta connexion ou relance l'analyse.",
-    fallbackMessage: "Impossible d'analyser pour le moment.",
+    timeoutMessage: copy.radarTimeout,
+    networkMessage: copy.radarNetwork,
+    fallbackMessage: copy.radarFallback,
+    language: input.language,
   });
 
   return {
@@ -515,19 +584,21 @@ export async function fetchRadarSuggestions(input: RadarRequestInput): Promise<R
 export async function fetchRadarDisciplineAnalysis(
   input: RadarDisciplineRequestInput,
 ): Promise<RadarDisciplineAnalysis> {
+  const copy = getRadarClientCopy(input.language);
   const payload = await postAuthorizedRadarRequest<{
     analysis?: RadarDisciplineAnalysis;
   }>({
     path: "/api/radar-discipline",
     body: input,
     timeoutMs: RADAR_DISCIPLINE_TIMEOUT_MS,
-    timeoutMessage: "Le coach discipline prend trop de temps. Relance l'analyse.",
-    networkMessage: "Connexion impossible pour le moment. Verifie ta connexion ou relance l'analyse.",
-    fallbackMessage: "Impossible d'analyser ta discipline pour le moment.",
+    timeoutMessage: copy.disciplineTimeout,
+    networkMessage: copy.radarNetwork,
+    fallbackMessage: copy.disciplineFallback,
+    language: input.language,
   });
 
   if (!payload.analysis) {
-    throw new Error("Impossible d'analyser ta discipline pour le moment.");
+    throw new Error(copy.disciplineFallback);
   }
 
   return payload.analysis;

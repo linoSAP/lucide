@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { getStoredCurrencyPreference } from "@/lib/currency";
+import type { AppLanguage } from "@/lib/language";
 import {
   createBet,
   getBetKindLabel,
@@ -25,6 +26,7 @@ import { formatAmount, formatDateTime, formatOdds } from "@/lib/format";
 import { useBets } from "@/hooks/use-bets";
 import { getErrorMessage } from "@/lib/utils";
 import { useAuthStore } from "@/store/use-auth-store";
+import { useLanguageStore } from "@/store/use-language-store";
 import type { BetKind, BetRow, BetStatus } from "@/types/supabase";
 
 type SheetMode = "create" | "update";
@@ -43,24 +45,9 @@ interface JournalFormState {
   cashoutAmount: string;
 }
 
-const viewModes: Array<{ value: JournalViewMode; label: string }> = [
-  { value: "cards", label: "Cartes" },
-  { value: "grid", label: "Grille" },
-  { value: "table", label: "Tableau" },
-];
-
-const createStatusOptions: Array<{ value: BetStatus; label: string }> = [
-  { value: "pending", label: "En cours" },
-  { value: "won", label: "Gagne" },
-  { value: "lost", label: "Perdu" },
-];
-
-const updateStatusOptions: Array<{ value: BetStatus; label: string }> = [
-  { value: "pending", label: "En cours" },
-  { value: "won", label: "Gagne" },
-  { value: "lost", label: "Perdu" },
-  { value: "cashed_out", label: "Cashout" },
-];
+const viewModeValues: JournalViewMode[] = ["cards", "grid", "table"];
+const createStatusOptionValues: BetStatus[] = ["pending", "won", "lost"];
+const updateStatusOptionValues: BetStatus[] = ["pending", "won", "lost", "cashed_out"];
 
 const pageSizeByMode: Record<JournalViewMode, number> = {
   cards: 5,
@@ -106,6 +93,114 @@ function parseIntegerish(value: string) {
   return Number.parseInt(value, 10);
 }
 
+function getJournalCopy(language: AppLanguage) {
+  return language === "en"
+    ? {
+        viewModes: {
+          cards: "Cards",
+          grid: "Grid",
+          table: "Table",
+        },
+        frozen: "Locked",
+        update: "Update",
+        stake: "Stake",
+        totalOdds: "Total odds",
+        odds: "Odds",
+        settleThisBet: "Settle this bet",
+        recentBets: "Recent bets",
+        recentBetsHint: "Sorted from newest to oldest.",
+        pending: "Pending",
+        settled: "settled",
+        singles: "singles",
+        combos: "combos",
+        loading: "Loading bets...",
+        emptyTitle: "Journal is empty",
+        emptyDescription: "Tap the + button to add your first bet.",
+        match: "Match",
+        type: "Type",
+        structure: "Structure",
+        returned: "Return",
+        amount: "Amount",
+        status: "Status",
+        action: "Action",
+        of: "of",
+        previous: "Previous",
+        next: "Next",
+        close: "Close",
+        addBet: "Add a bet",
+        settleBet: "Settle the bet",
+        targetBet: "Only pending bets can be edited. Target bet:",
+        saveUnavailable: "Unable to save right now.",
+        other: "Other",
+        single: "Single",
+        combo: "Combo",
+        eventCount: "No. events",
+        minOdds: "Min odds",
+        maxOdds: "Max odds",
+        oddsPlaceholder: "Odds 2.50",
+        singleOrCombo: "Single or combo",
+        singleTicket: "Single ticket",
+        comboHint: "For a combo, enter at least the number of events and the total odds. Min and max odds stay optional if you want to log it quickly.",
+        cashoutHint: "Cashout replaces the calculated return and becomes the amount actually recovered.",
+        saving: "Saving...",
+        updating: "Updating...",
+        save: "Save",
+        applyChange: "Apply change",
+      }
+    : {
+        viewModes: {
+          cards: "Cartes",
+          grid: "Grille",
+          table: "Tableau",
+        },
+        frozen: "Fige",
+        update: "Mettre a jour",
+        stake: "Mise",
+        totalOdds: "Cote totale",
+        odds: "Cote",
+        settleThisBet: "Regler ce pari",
+        recentBets: "Mises recentes",
+        recentBetsHint: "Classees des plus recentes aux plus anciennes.",
+        pending: "En cours",
+        settled: "regle(s)",
+        singles: "simples",
+        combos: "combines",
+        loading: "Chargement des mises...",
+        emptyTitle: "Journal vide",
+        emptyDescription: "Appuie sur le bouton + pour ajouter ta premiere mise.",
+        match: "Match",
+        type: "Type",
+        structure: "Structure",
+        returned: "Retour",
+        amount: "Montant",
+        status: "Statut",
+        action: "Action",
+        of: "sur",
+        previous: "Precedent",
+        next: "Suivant",
+        close: "Fermer",
+        addBet: "Ajouter une mise",
+        settleBet: "Regler le pari",
+        targetBet: "Seul un pari en cours est modifiable. Ticket cible:",
+        saveUnavailable: "Impossible d'enregistrer pour le moment.",
+        other: "Autre",
+        single: "Simple",
+        combo: "Combine",
+        eventCount: "Nb events",
+        minOdds: "Cote min",
+        maxOdds: "Cote max",
+        oddsPlaceholder: "Cote 2.50",
+        singleOrCombo: "Simple ou combine",
+        singleTicket: "Ticket simple",
+        comboHint: "Pour un combine, renseigne au minimum le nombre d'evenements et la cote totale. Les cotes min et max restent optionnelles si tu veux juste importer vite.",
+        cashoutHint: "Le cashout remplace le retour calcule et devient le montant reellement recupere.",
+        saving: "Enregistrement...",
+        updating: "Mise a jour...",
+        save: "Enregistrer",
+        applyChange: "Appliquer le changement",
+      };
+}
+
 function BetAction({
   bet,
   onEdit,
@@ -113,13 +208,16 @@ function BetAction({
   bet: BetRow;
   onEdit: (bet: BetRow) => void;
 }) {
+  const language = useLanguageStore((state) => state.language);
+  const copy = getJournalCopy(language);
+
   if (!isBetPending(bet.status)) {
-    return <span className="text-xs text-muted-foreground">Fige</span>;
+    return <span className="text-xs text-muted-foreground">{copy.frozen}</span>;
   }
 
   return (
     <Button variant="warning" size="sm" className="rounded-full px-3 font-semibold" onClick={() => onEdit(bet)}>
-      Mettre a jour
+      {copy.update}
     </Button>
   );
 }
@@ -144,6 +242,9 @@ function BetCard({
   bet: BetRow;
   onEdit: (bet: BetRow) => void;
 }) {
+  const language = useLanguageStore((state) => state.language);
+  const copy = getJournalCopy(language);
+
   return (
     <div className="surface hairline rounded-[18px] px-4 py-3 shadow-soft">
       <div className="flex items-start justify-between gap-3">
@@ -157,12 +258,12 @@ function BetCard({
 
       <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
         <div>
-          <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Mise</p>
+          <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">{copy.stake}</p>
           <p className="mt-1 tabular text-foreground">{formatAmount(bet.stake)}</p>
         </div>
         <div>
           <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
-            {isComboBet(bet.bet_kind) ? "Cote totale" : "Cote"}
+            {isComboBet(bet.bet_kind) ? copy.totalOdds : copy.odds}
           </p>
           <p className="mt-1 tabular text-foreground">{formatOdds(bet.odds)}</p>
         </div>
@@ -187,6 +288,9 @@ function BetGridCard({
   bet: BetRow;
   onEdit: (bet: BetRow) => void;
 }) {
+  const language = useLanguageStore((state) => state.language);
+  const copy = getJournalCopy(language);
+
   return (
     <div className="surface hairline rounded-[18px] p-4 shadow-soft">
       <div className="flex items-start justify-between gap-2">
@@ -201,11 +305,11 @@ function BetGridCard({
 
       <div className="mt-4 space-y-2 text-sm">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-muted-foreground">Mise</span>
+          <span className="text-muted-foreground">{copy.stake}</span>
           <span className="tabular text-foreground">{formatAmount(bet.stake)}</span>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <span className="text-muted-foreground">{isComboBet(bet.bet_kind) ? "Cote totale" : "Cote"}</span>
+          <span className="text-muted-foreground">{isComboBet(bet.bet_kind) ? copy.totalOdds : copy.odds}</span>
           <span className="tabular text-foreground">{formatOdds(bet.odds)}</span>
         </div>
         <div className="flex items-center justify-between gap-2">
@@ -218,7 +322,7 @@ function BetGridCard({
         <p className="text-[11px] leading-5 text-muted-foreground">{formatDateTime(bet.created_at)}</p>
         {isBetPending(bet.status) ? (
           <Button variant="warning" size="sm" className="w-full font-semibold" onClick={() => onEdit(bet)}>
-            Regler ce pari
+            {copy.settleThisBet}
           </Button>
         ) : null}
       </div>
@@ -228,6 +332,8 @@ function BetGridCard({
 
 export function JournalPage() {
   const activeCurrencyCode = getStoredCurrencyPreference();
+  const language = useLanguageStore((state) => state.language);
+  const copy = getJournalCopy(language);
   const session = useAuthStore((state) => state.session);
   const { bets, isLoading, error: loadError, refresh } = useBets();
   const [viewMode, setViewMode] = useState<JournalViewMode>("cards");
@@ -385,7 +491,7 @@ export function JournalPage() {
       setIsSheetOpen(false);
       await refresh();
     } catch (error) {
-      setSaveError(getErrorMessage(error, "Impossible d'enregistrer pour le moment."));
+      setSaveError(getErrorMessage(error, copy.saveUnavailable));
     } finally {
       setIsSubmitting(false);
     }
@@ -397,15 +503,15 @@ export function JournalPage() {
         <div className="surface hairline rounded-[20px] px-4 py-4 shadow-soft">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-sm font-medium text-foreground">Mises recentes</p>
+              <p className="text-sm font-medium text-foreground">{copy.recentBets}</p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                Classees des plus recentes aux plus anciennes.
+                {copy.recentBetsHint}
               </p>
             </div>
 
             <div className="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-sm">
               <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
-                En cours
+                {copy.pending}
               </span>
               <span className="font-semibold tabular-nums text-foreground">
                 {openCount}
@@ -414,28 +520,28 @@ export function JournalPage() {
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>{bets.length} ticket(s)</span>
+            <span>{bets.length} {language === "en" ? "bet(s)" : "ticket(s)"}</span>
             <span className="h-1 w-1 rounded-full bg-white/20" />
-            <span>{settledCount} regle(s)</span>
+            <span>{settledCount} {copy.settled}</span>
             <span className="h-1 w-1 rounded-full bg-white/20" />
-            <span>{singleCount} simples</span>
+            <span>{singleCount} {copy.singles}</span>
             <span className="h-1 w-1 rounded-full bg-white/20" />
-            <span>{comboCount} combines</span>
+            <span>{comboCount} {copy.combos}</span>
           </div>
 
           <div className="mt-4 grid grid-cols-3 gap-2 rounded-[16px] bg-white/4 p-1">
-            {viewModes.map((mode) => (
+            {viewModeValues.map((mode) => (
               <button
-                key={mode.value}
+                key={mode}
                 type="button"
                 className={
-                  viewMode === mode.value
+                  viewMode === mode
                     ? "rounded-[14px] bg-white/8 px-3 py-2 text-sm font-medium text-foreground transition"
                     : "rounded-[14px] px-3 py-2 text-sm font-medium text-muted-foreground transition hover:text-foreground"
                 }
-                onClick={() => setViewMode(mode.value)}
+                onClick={() => setViewMode(mode)}
               >
-                {mode.label}
+                {copy.viewModes[mode]}
               </button>
             ))}
           </div>
@@ -443,16 +549,16 @@ export function JournalPage() {
 
         <div className="space-y-3">
           {loadError ? <p className="px-1 text-sm text-negative/90">{loadError}</p> : null}
-          {isLoading ? <p className="px-1 text-sm text-muted-foreground">Chargement des mises...</p> : null}
+          {isLoading ? <p className="px-1 text-sm text-muted-foreground">{copy.loading}</p> : null}
 
           {isLoading === false && bets.length === 0 ? (
             <div className="surface hairline rounded-[20px] p-5 shadow-soft">
               <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/6 text-foreground">
                 <ReceiptText className="h-4 w-4" />
               </div>
-              <p className="mt-4 text-base font-semibold text-foreground">Journal vide</p>
+              <p className="mt-4 text-base font-semibold text-foreground">{copy.emptyTitle}</p>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                Appuie sur le bouton + pour ajouter ta premiere mise.
+                {copy.emptyDescription}
               </p>
             </div>
           ) : null}
@@ -473,14 +579,14 @@ export function JournalPage() {
                 <table className="w-full min-w-[920px] text-sm">
                   <thead className="border-b border-white/5 text-left text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
                     <tr>
-                      <th className="px-4 py-3 font-medium">Match</th>
-                      <th className="px-4 py-3 font-medium">Type</th>
-                      <th className="px-4 py-3 font-medium">Structure</th>
-                      <th className="px-4 py-3 font-medium">Mise</th>
-                      <th className="px-4 py-3 font-medium">Cote</th>
-                      <th className="px-4 py-3 font-medium">Retour</th>
-                      <th className="px-4 py-3 font-medium">Statut</th>
-                      <th className="px-4 py-3 font-medium">Action</th>
+                      <th className="px-4 py-3 font-medium">{copy.match}</th>
+                      <th className="px-4 py-3 font-medium">{copy.type}</th>
+                      <th className="px-4 py-3 font-medium">{copy.structure}</th>
+                      <th className="px-4 py-3 font-medium">{copy.stake}</th>
+                      <th className="px-4 py-3 font-medium">{copy.odds}</th>
+                      <th className="px-4 py-3 font-medium">{copy.returned}</th>
+                      <th className="px-4 py-3 font-medium">{copy.status}</th>
+                      <th className="px-4 py-3 font-medium">{copy.action}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -520,7 +626,7 @@ export function JournalPage() {
             <div className="surface hairline rounded-[18px] px-4 py-3 shadow-soft">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm text-muted-foreground">
-                  {pageStart}-{pageEnd} sur {bets.length}
+                  {pageStart}-{pageEnd} {copy.of} {bets.length}
                 </p>
 
                 <div className="flex items-center gap-2">
@@ -530,7 +636,7 @@ export function JournalPage() {
                     onClick={() => setPage((current) => Math.max(1, current - 1))}
                     disabled={currentPage === 1}
                   >
-                    Precedent
+                    {copy.previous}
                   </Button>
                   <div className="rounded-full bg-white/5 px-3 py-1 text-xs text-muted-foreground">
                     {currentPage}/{pageCount}
@@ -541,7 +647,7 @@ export function JournalPage() {
                     onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
                     disabled={currentPage === pageCount}
                   >
-                    Suivant
+                    {copy.next}
                   </Button>
                 </div>
               </div>
@@ -561,7 +667,7 @@ export function JournalPage() {
           <>
             <motion.button
               type="button"
-              aria-label="Fermer"
+              aria-label={copy.close}
               className="fixed inset-0 z-40 bg-background/56 backdrop-blur-md"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -583,14 +689,14 @@ export function JournalPage() {
                 <div className="mt-4 flex items-center justify-between gap-3">
                   <div>
                     <p className="text-base font-semibold text-foreground">
-                      {sheetMode === "create" ? "Ajouter une mise" : "Regler le pari"}
+                      {sheetMode === "create" ? copy.addBet : copy.settleBet}
                     </p>
                     <p className="mt-1 text-sm text-muted-foreground">
                       {previewLabel} <span className="tabular text-foreground">{formatAmount(previewAmount)}</span>
                     </p>
                     {sheetMode === "update" && editingBet ? (
                       <p className="mt-1 text-xs text-muted-foreground">
-                        Seul un pari en cours est modifiable. Ticket cible: {editingBet.match_label}
+                        {copy.targetBet} {editingBet.match_label}
                       </p>
                     ) : null}
                   </div>
@@ -599,6 +705,7 @@ export function JournalPage() {
                     type="button"
                     className="flex h-10 w-10 items-center justify-center rounded-full bg-white/5 text-muted-foreground transition hover:text-foreground"
                     onClick={closeSheet}
+                    aria-label={copy.close}
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -613,7 +720,7 @@ export function JournalPage() {
                       <option value="Football">Football</option>
                       <option value="Basketball">Basketball</option>
                       <option value="Tennis">Tennis</option>
-                      <option value="Autre">Autre</option>
+                      <option value={copy.other}>{copy.other}</option>
                     </Select>
 
                     <Select
@@ -628,8 +735,8 @@ export function JournalPage() {
                         }))
                       }
                     >
-                      <option value="single">Simple</option>
-                      <option value="combo">Combine</option>
+                      <option value="single">{copy.single}</option>
+                      <option value="combo">{copy.combo}</option>
                     </Select>
                   </div>
 
@@ -646,7 +753,7 @@ export function JournalPage() {
                         min="2"
                         step="1"
                         inputMode="numeric"
-                        placeholder="Nb events"
+                        placeholder={copy.eventCount}
                         value={form.eventCount}
                         onChange={(event) => setForm((current) => ({ ...current, eventCount: event.target.value }))}
                       />
@@ -656,7 +763,7 @@ export function JournalPage() {
                         min="0"
                         step="0.01"
                         inputMode="decimal"
-                        placeholder="Cote min"
+                        placeholder={copy.minOdds}
                         value={form.minOdds}
                         onChange={(event) => setForm((current) => ({ ...current, minOdds: event.target.value }))}
                       />
@@ -666,7 +773,7 @@ export function JournalPage() {
                         min="0"
                         step="0.01"
                         inputMode="decimal"
-                        placeholder="Cote max"
+                        placeholder={copy.maxOdds}
                         value={form.maxOdds}
                         onChange={(event) => setForm((current) => ({ ...current, maxOdds: event.target.value }))}
                       />
@@ -679,7 +786,7 @@ export function JournalPage() {
                       min="0"
                       step="1"
                       inputMode="numeric"
-                      placeholder={`Mise ${activeCurrencyCode}`}
+                      placeholder={`${copy.stake} ${activeCurrencyCode}`}
                       value={form.stake}
                       onChange={(event) => setForm((current) => ({ ...current, stake: event.target.value }))}
                     />
@@ -689,7 +796,7 @@ export function JournalPage() {
                       min="0"
                       step="0.01"
                       inputMode="decimal"
-                      placeholder={isCombo ? "Cote totale" : "Cote 2.50"}
+                      placeholder={isCombo ? copy.totalOdds : copy.oddsPlaceholder}
                       value={form.odds}
                       onChange={(event) => setForm((current) => ({ ...current, odds: event.target.value }))}
                     />
@@ -706,9 +813,9 @@ export function JournalPage() {
                         }))
                       }
                     >
-                      {(sheetMode === "create" ? createStatusOptions : updateStatusOptions).map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
+                      {(sheetMode === "create" ? createStatusOptionValues : updateStatusOptionValues).map((option) => (
+                        <option key={option} value={option}>
+                          {getStatusLabel(option)}
                         </option>
                       ))}
                     </Select>
@@ -719,27 +826,26 @@ export function JournalPage() {
                         min="0"
                         step="1"
                         inputMode="numeric"
-                        placeholder={`Montant ${activeCurrencyCode}`}
+                        placeholder={`${copy.amount} ${activeCurrencyCode}`}
                         value={form.cashoutAmount}
                         onChange={(event) => setForm((current) => ({ ...current, cashoutAmount: event.target.value }))}
                       />
                     ) : (
                       <div className="rounded-[14px] border border-white/5 bg-white/4 px-4 py-3 text-sm text-muted-foreground">
-                        {isCombo ? "Simple ou combine" : "Ticket simple"}
+                        {isCombo ? copy.singleOrCombo : copy.singleTicket}
                       </div>
                     )}
                   </div>
 
                   {isCombo ? (
                     <p className="px-1 text-xs leading-5 text-muted-foreground">
-                      Pour un combine, renseigne au minimum le nombre d'evenements et la cote totale. Les cotes min et
-                      max restent optionnelles si tu veux juste importer vite.
+                      {copy.comboHint}
                     </p>
                   ) : null}
 
                   {isCashout ? (
                     <p className="px-1 text-xs leading-5 text-muted-foreground">
-                      Le cashout remplace le retour calcule et devient le montant reellement recupere.
+                      {copy.cashoutHint}
                     </p>
                   ) : null}
 
@@ -748,11 +854,11 @@ export function JournalPage() {
                   <Button type="submit" size="lg" className="w-full" disabled={isSubmitting || !isFormReady}>
                     {isSubmitting
                       ? sheetMode === "create"
-                        ? "Enregistrement..."
-                        : "Mise a jour..."
+                        ? copy.saving
+                        : copy.updating
                       : sheetMode === "create"
-                        ? "Enregistrer"
-                        : "Appliquer le changement"}
+                        ? copy.save
+                        : copy.applyChange}
                   </Button>
                 </form>
               </div>

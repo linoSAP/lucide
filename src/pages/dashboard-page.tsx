@@ -12,6 +12,53 @@ import {
 import { formatAmount, formatPercent, formatShortDate } from "@/lib/format";
 import { useBets } from "@/hooks/use-bets";
 import { cn } from "@/lib/utils";
+import { useLanguageStore } from "@/store/use-language-store";
+
+function getDashboardCopy(language: "fr" | "en") {
+  return language === "en"
+    ? {
+        avgStake: "Average stake",
+        avgStakeDetail: "Average amount committed per bet across the whole journal.",
+        bestSport: "Best sport",
+        bestSportDetail: "The one standing out the most once bets are settled.",
+        worstStreak: "Worst streak",
+        worstStreakDetailActive: "consecutive loss(es) on the toughest streak.",
+        worstStreakDetailEmpty: "No losing streak in a row for now.",
+        successRate: "success rate",
+        committedOnSingles: "committed on singles",
+        avgEventsPerCombo: "event(s) on average per combo",
+        noComboYet: "No combo recorded yet",
+        totalStake: "Total stake",
+        totalRecovered: "Total returned",
+        netResult: "Net result",
+        hitRate: "Hit rate",
+        cumulativeBalance: "Cumulative balance",
+        loadingEvolution: "Loading performance...",
+        chartEmpty: "The chart will appear once a few bets have been recorded.",
+        balanceTooltip: "Balance",
+      }
+    : {
+        avgStake: "Mise moyenne",
+        avgStakeDetail: "Montant moyen engage par pari sur l'ensemble du journal.",
+        bestSport: "Sport rentable",
+        bestSportDetail: "Celui qui ressort le mieux une fois les tickets regles.",
+        worstStreak: "Pire serie",
+        worstStreakDetailActive: "defaite(s) consecutives sur la serie la plus dure.",
+        worstStreakDetailEmpty: "Aucune serie negative consecutive pour l'instant.",
+        successRate: "de reussite",
+        committedOnSingles: "engages sur les simples",
+        avgEventsPerCombo: "evenement(s) en moyenne par combine",
+        noComboYet: "Aucun combine enregistre pour l'instant",
+        totalStake: "Total mise",
+        totalRecovered: "Total recupere",
+        netResult: "Bilan net",
+        hitRate: "Reussite",
+        cumulativeBalance: "Bilan cumule",
+        loadingEvolution: "Chargement de l'evolution...",
+        chartEmpty: "Le graphe apparaitra des que quelques mises seront enregistrees.",
+        balanceTooltip: "Bilan",
+      };
+}
 
 interface MetricTileProps {
   label: string;
@@ -110,6 +157,8 @@ function KindCard({ label, value, detail, note, net, accent, rate }: KindCardPro
 }
 
 export function DashboardPage() {
+  const language = useLanguageStore((state) => state.language);
+  const copy = getDashboardCopy(language);
   const { bets, isLoading, error } = useBets();
 
   const metrics = calculateBetMetrics(bets);
@@ -128,24 +177,24 @@ export function DashboardPage() {
 
   const focusCards: FocusCardProps[] = [
     {
-      label: "Mise moyenne",
+      label: copy.avgStake,
       value: formatAmount(averageStake),
-      detail: "Montant moyen engage par pari sur l'ensemble du journal.",
+      detail: copy.avgStakeDetail,
       tone: "positive",
     },
     {
-      label: "Sport rentable",
+      label: copy.bestSport,
       value: mostProfitableSport,
-      detail: "Celui qui ressort le mieux une fois les tickets regles.",
+      detail: copy.bestSportDetail,
       tone: "warning",
     },
     {
-      label: "Pire serie",
+      label: copy.worstStreak,
       value: worstLosingStreak > 0 ? `${worstLosingStreak}` : "0",
       detail:
         worstLosingStreak > 0
-          ? "defaite(s) consecutives sur la serie la plus dure."
-          : "Aucune serie negative consecutive pour l'instant.",
+          ? copy.worstStreakDetailActive
+          : copy.worstStreakDetailEmpty,
       tone: "negative",
     },
   ];
@@ -154,8 +203,8 @@ export function DashboardPage() {
     {
       label: getBetKindLabel("single"),
       value: formatAmount(kindBreakdown.single.net),
-      detail: `${kindBreakdown.single.count} ticket(s) - ${formatPercent(kindBreakdown.single.winRate)} de reussite`,
-      note: `${formatAmount(kindBreakdown.single.totalStake)} engages sur les simples`,
+      detail: `${kindBreakdown.single.count} ${language === "en" ? "bet(s)" : "ticket(s)"} - ${formatPercent(kindBreakdown.single.winRate)} ${copy.successRate}`,
+      note: `${formatAmount(kindBreakdown.single.totalStake)} ${copy.committedOnSingles}`,
       net: kindBreakdown.single.net,
       accent: "positive",
       rate: kindBreakdown.single.winRate,
@@ -163,11 +212,11 @@ export function DashboardPage() {
     {
       label: getBetKindLabel("combo"),
       value: formatAmount(kindBreakdown.combo.net),
-      detail: `${kindBreakdown.combo.count} ticket(s) - ${formatPercent(kindBreakdown.combo.winRate)} de reussite`,
+      detail: `${kindBreakdown.combo.count} ${language === "en" ? "bet(s)" : "ticket(s)"} - ${formatPercent(kindBreakdown.combo.winRate)} ${copy.successRate}`,
       note:
         kindBreakdown.combo.count > 0
-          ? `${kindBreakdown.combo.averageEventCount.toFixed(1)} evenement(s) en moyenne par combine`
-          : "Aucun combine enregistre pour l'instant",
+          ? `${kindBreakdown.combo.averageEventCount.toFixed(1)} ${copy.avgEventsPerCombo}`
+          : copy.noComboYet,
       net: kindBreakdown.combo.net,
       accent: "warning",
       rate: kindBreakdown.combo.winRate,
@@ -179,14 +228,14 @@ export function DashboardPage() {
       {error ? <p className="px-1 text-sm text-negative/90">{error}</p> : null}
 
       <div className="grid grid-cols-2 gap-3">
-        <MetricTile label="Total mise" value={formatAmount(totalStaked)} />
-        <MetricTile label="Total recupere" value={formatAmount(totalRecovered)} />
+        <MetricTile label={copy.totalStake} value={formatAmount(totalStaked)} />
+        <MetricTile label={copy.totalRecovered} value={formatAmount(totalRecovered)} />
         <MetricTile
-          label="Bilan net"
+          label={copy.netResult}
           value={formatAmount(netBalance)}
           tone={netBalance > 0 ? "positive" : netBalance < 0 ? "negative" : "neutral"}
         />
-        <MetricTile label="Reussite" value={formatPercent(winRate)} tone={winRate > 50 ? "positive" : "neutral"} />
+        <MetricTile label={copy.hitRate} value={formatPercent(winRate)} tone={winRate > 50 ? "positive" : "neutral"} />
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -196,13 +245,13 @@ export function DashboardPage() {
       </div>
 
       <div className="surface hairline rounded-[24px] px-4 py-4 shadow-soft">
-        <p className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">Bilan cumule</p>
+        <p className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">{copy.cumulativeBalance}</p>
 
-        {isLoading ? <p className="mt-6 text-sm text-muted-foreground">Chargement de l'evolution...</p> : null}
+        {isLoading ? <p className="mt-6 text-sm text-muted-foreground">{copy.loadingEvolution}</p> : null}
 
         {isLoading === false && chartData.length === 0 ? (
           <p className="mt-6 text-sm leading-6 text-muted-foreground">
-            Le graphe apparaitra des que quelques mises seront enregistrees.
+            {copy.chartEmpty}
           </p>
         ) : null}
 
@@ -229,7 +278,7 @@ export function DashboardPage() {
                     boxShadow: "0 18px 40px rgb(var(--surface-shadow) / 0.14)",
                   }}
                   labelStyle={{ color: "rgb(var(--muted-foreground) / 1)", fontSize: 12 }}
-                  formatter={(value) => [formatAmount(Number(value)), "Bilan"]}
+                  formatter={(value) => [formatAmount(Number(value)), copy.balanceTooltip]}
                 />
                 <Line
                   type="monotone"

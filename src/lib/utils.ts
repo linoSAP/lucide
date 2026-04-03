@@ -1,8 +1,13 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { getStoredLanguagePreference } from "@/lib/language";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+function isEnglishLanguage() {
+  return getStoredLanguagePreference() === "en";
 }
 
 export function normalizeErrorMessage(message: string | null | undefined, fallback: string) {
@@ -13,6 +18,7 @@ export function normalizeErrorMessage(message: string | null | undefined, fallba
   }
 
   const normalizedMessage = trimmedMessage.toLowerCase();
+  const isEnglish = isEnglishLanguage();
 
   if (
     normalizedMessage.includes("failed to fetch") ||
@@ -23,7 +29,9 @@ export function normalizeErrorMessage(message: string | null | undefined, fallba
     normalizedMessage.includes("network connection was lost") ||
     normalizedMessage.includes("internet connection appears to be offline")
   ) {
-    return "Connexion impossible pour le moment. Verifie ta connexion puis relance.";
+    return isEnglish
+      ? "Connection is unavailable right now. Check your connection and try again."
+      : "Connexion impossible pour le moment. Verifie ta connexion puis relance.";
   }
 
   if (
@@ -32,7 +40,9 @@ export function normalizeErrorMessage(message: string | null | undefined, fallba
     normalizedMessage.includes("timeout") ||
     normalizedMessage.includes("signal is aborted")
   ) {
-    return "La demande a pris trop de temps. Relance dans quelques secondes.";
+    return isEnglish
+      ? "The request took too long. Try again in a few seconds."
+      : "La demande a pris trop de temps. Relance dans quelques secondes.";
   }
 
   if (
@@ -43,7 +53,9 @@ export function normalizeErrorMessage(message: string | null | undefined, fallba
     normalizedMessage.includes("input too large") ||
     normalizedMessage.includes("message too long")
   ) {
-    return "La demande etait trop lourde pour etre finalisee. Relance simplement.";
+    return isEnglish
+      ? "The request was too large to complete. Just try again."
+      : "La demande etait trop lourde pour etre finalisee. Relance simplement.";
   }
 
   if (
@@ -54,7 +66,41 @@ export function normalizeErrorMessage(message: string | null | undefined, fallba
     normalizedMessage.includes("overloaded") ||
     normalizedMessage.includes("too many requests")
   ) {
-    return "Service temporairement indisponible. Reessaie dans quelques secondes.";
+    return isEnglish
+      ? "The service is temporarily unavailable. Try again in a few seconds."
+      : "Service temporairement indisponible. Reessaie dans quelques secondes.";
+  }
+
+  if (isEnglish && normalizedMessage.includes("session invalide")) {
+    return "Your session is invalid. Sign in again.";
+  }
+
+  if (isEnglish && normalizedMessage.includes("sport non pris en charge")) {
+    return "Unsupported sport.";
+  }
+
+  if (isEnglish && normalizedMessage.includes("niveau de risque invalide")) {
+    return "Invalid risk level.";
+  }
+
+  if (isEnglish && normalizedMessage.includes("fenetre de dates invalide")) {
+    return "Invalid date window.";
+  }
+
+  if (isEnglish && normalizedMessage.includes("quota de la semaine atteint")) {
+    return "This week's quota has been reached. Get tokens to continue.";
+  }
+
+  if (isEnglish && normalizedMessage.includes("mot de passe admin invalide")) {
+    return "Invalid admin password.";
+  }
+
+  if (isEnglish && normalizedMessage.includes("session admin invalide")) {
+    return "Invalid admin session.";
+  }
+
+  if (isEnglish && normalizedMessage.includes("montant ou nombre de jetons invalide")) {
+    return "Invalid amount or token count.";
   }
 
   if (

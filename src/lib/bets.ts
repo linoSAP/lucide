@@ -1,4 +1,5 @@
 import { getSupabaseOrThrow } from "@/lib/supabase";
+import { getStoredLanguagePreference } from "@/lib/language";
 import type { BetKind, BetRow, BetStatus } from "@/types/supabase";
 
 export interface CumulativeBalancePoint {
@@ -45,8 +46,16 @@ export function isComboBet(kind: BetKind) {
   return kind === "combo";
 }
 
+function isEnglishLanguage() {
+  return getStoredLanguagePreference() === "en";
+}
+
+function getLocalizedText(fr: string, en: string) {
+  return isEnglishLanguage() ? en : fr;
+}
+
 export function getBetKindLabel(kind: BetKind) {
-  return isComboBet(kind) ? "Combine" : "Simple";
+  return isComboBet(kind) ? getLocalizedText("Combine", "Combo") : getLocalizedText("Simple", "Single");
 }
 
 export function getBetKindVariant(kind: BetKind) {
@@ -79,31 +88,34 @@ function sanitizeOptionalPositiveNumber(value?: number | null) {
     return null;
   }
 
-  return sanitizePositiveNumber(value ?? 0, "Cote");
+  return sanitizePositiveNumber(value ?? 0, getLocalizedText("Cote", "Odds"));
 }
 
 function sanitizeBetValues(values: CreateBetValues) {
   if (!allowedBetKinds.has(values.betKind)) {
-    throw new Error("Type de pari invalide.");
+    throw new Error(getLocalizedText("Type de pari invalide.", "Invalid bet type."));
   }
 
   if (!allowedBetStatuses.has(values.status)) {
-    throw new Error("Statut de pari invalide.");
+    throw new Error(getLocalizedText("Statut de pari invalide.", "Invalid bet status."));
   }
 
-  const sport = normalizeTextField(values.sport, "Sport", 40);
-  const matchLabel = normalizeTextField(values.matchLabel, "Match", 140);
-  const stake = sanitizePositiveNumber(values.stake, "Mise");
-  const odds = sanitizePositiveNumber(values.odds, "Cote");
+  const sport = normalizeTextField(values.sport, getLocalizedText("Sport", "Sport"), 40);
+  const matchLabel = normalizeTextField(values.matchLabel, getLocalizedText("Match", "Match"), 140);
+  const stake = sanitizePositiveNumber(values.stake, getLocalizedText("Mise", "Stake"));
+  const odds = sanitizePositiveNumber(values.odds, getLocalizedText("Cote", "Odds"));
   const minOdds = sanitizeOptionalPositiveNumber(values.minOdds);
   const maxOdds = sanitizeOptionalPositiveNumber(values.maxOdds);
   const isCombo = isComboBet(values.betKind);
   const rawEventCount = Number.isFinite(values.eventCount ?? NaN) ? Math.round(values.eventCount ?? 2) : 2;
   const eventCount = isCombo ? Math.max(2, rawEventCount) : 1;
-  const cashoutAmount = values.status === "cashed_out" ? sanitizePositiveNumber(values.cashoutAmount ?? NaN, "Cashout") : null;
+  const cashoutAmount =
+    values.status === "cashed_out"
+      ? sanitizePositiveNumber(values.cashoutAmount ?? NaN, getLocalizedText("Cashout", "Cashout"))
+      : null;
 
   if (minOdds !== null && maxOdds !== null && maxOdds < minOdds) {
-    throw new Error("La cote max doit etre superieure ou egale a la cote min.");
+    throw new Error(getLocalizedText("La cote max doit etre superieure ou egale a la cote min.", "Max odds must be greater than or equal to min odds."));
   }
 
   return {
@@ -246,7 +258,7 @@ export async function updatePendingBet(userId: string, betId: string, values: Up
   }
 
   if (!data) {
-    throw new Error("Seuls les paris en cours peuvent etre modifies.");
+    throw new Error(getLocalizedText("Seuls les paris en cours peuvent etre modifies.", "Only pending bets can be updated."));
   }
 
   return data;
@@ -254,7 +266,7 @@ export async function updatePendingBet(userId: string, betId: string, values: Up
 
 export function getStatusLabel(status: BetStatus) {
   if (status === "won") {
-    return "Gagne";
+    return getLocalizedText("Gagne", "Won");
   }
 
   if (status === "cashed_out") {
@@ -262,10 +274,10 @@ export function getStatusLabel(status: BetStatus) {
   }
 
   if (status === "lost") {
-    return "Perdu";
+    return getLocalizedText("Perdu", "Lost");
   }
 
-  return "En cours";
+  return getLocalizedText("En cours", "Pending");
 }
 
 export function getStatusVariant(status: BetStatus) {
@@ -307,6 +319,7 @@ export function calculateBetMetrics(bets: BetRow[]) {
   }, {});
 
   const favoriteSport = Object.entries(sportCount).sort((left, right) => right[1] - left[1])[0]?.[0] ?? "Aucun";
+  const fallbackFavoriteSport = getLocalizedText("Aucun", "None");
 
   return {
     totalStake,
@@ -319,7 +332,7 @@ export function calculateBetMetrics(bets: BetRow[]) {
     winRate,
     net,
     roi,
-    favoriteSport,
+    favoriteSport: favoriteSport || fallbackFavoriteSport,
   };
 }
 
@@ -337,14 +350,14 @@ export function getBetNetDelta(bet: BetRow) {
 
 export function getBetReturnLabel(status: BetStatus) {
   if (status === "pending") {
-    return "Potentiel";
+    return getLocalizedText("Potentiel", "Potential");
   }
 
   if (status === "cashed_out") {
     return "Cashout";
   }
 
-  return "Retour";
+  return getLocalizedText("Retour", "Return");
 }
 
 export function getBetReturnAmount(bet: BetRow) {
@@ -357,13 +370,13 @@ export function getBetReturnAmount(bet: BetRow) {
 
 export function getBetStructureSummary(bet: BetRow) {
   if (!isComboBet(bet.bet_kind)) {
-    return "1 evenement";
+    return getLocalizedText("1 evenement", "1 leg");
   }
 
-  const parts = [`${bet.event_count} ev.`];
+  const parts = [getLocalizedText(`${bet.event_count} ev.`, `${bet.event_count} legs`)];
 
   if (bet.min_odds && bet.max_odds) {
-    parts.push(`${bet.min_odds.toFixed(2)} a ${bet.max_odds.toFixed(2)}`);
+    parts.push(getLocalizedText(`${bet.min_odds.toFixed(2)} a ${bet.max_odds.toFixed(2)}`, `${bet.min_odds.toFixed(2)} to ${bet.max_odds.toFixed(2)}`));
   } else if (bet.min_odds) {
     parts.push(`min ${bet.min_odds.toFixed(2)}`);
   } else if (bet.max_odds) {
@@ -385,7 +398,7 @@ export function getMostProfitableSport(bets: BetRow[]) {
   const settledBets = bets.filter((bet) => isBetSettled(bet.status));
 
   if (!settledBets.length) {
-    return "Aucun";
+    return getLocalizedText("Aucun", "None");
   }
 
   const profitBySport = settledBets.reduce<Record<string, number>>((accumulator, bet) => {
@@ -393,7 +406,7 @@ export function getMostProfitableSport(bets: BetRow[]) {
     return accumulator;
   }, {});
 
-  return Object.entries(profitBySport).sort((left, right) => right[1] - left[1])[0]?.[0] ?? "Aucun";
+  return Object.entries(profitBySport).sort((left, right) => right[1] - left[1])[0]?.[0] ?? getLocalizedText("Aucun", "None");
 }
 
 export function getWorstLosingStreak(bets: BetRow[]) {

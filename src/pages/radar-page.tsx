@@ -13,6 +13,7 @@ import {
   calculateBetKindBreakdown,
   calculateBetMetrics,
   createBet,
+  getBetKindLabel,
   getMostProfitableSport,
   getWorstLosingStreak,
 } from "@/lib/bets";
@@ -36,14 +37,164 @@ import {
 } from "@/lib/radar";
 import { cn, getErrorMessage } from "@/lib/utils";
 import { useAuthStore } from "@/store/use-auth-store";
+import { useLanguageStore } from "@/store/use-language-store";
 import type { BetRow } from "@/types/supabase";
 
 type RadarDateMode = "day" | "range";
 
-const radarDateModeOptions: Array<{ value: RadarDateMode; label: string }> = [
-  { value: "day", label: "Jour" },
-  { value: "range", label: "Plage" },
-];
+function getRadarPageCopy(language: AppLanguage) {
+  return language === "en"
+    ? {
+        dateModes: { day: "Day", range: "Range" },
+        noHistoryUseful: "No useful history yet.",
+        tickets: "bets",
+        hitRateShort: "WR",
+        bestSportShort: "best sport",
+        singlesShort: "singles",
+        combosShort: "combos",
+        won: "won",
+        lost: "lost",
+        noHistoryDiscipline: "No usable history yet.",
+        totalVolume: "Total volume",
+        settledBets: "Settled bets",
+        openBets: "Open bets",
+        hitRate: "Hit rate",
+        roi: "ROI",
+        netResult: "Net result",
+        averageStake: "Average stake",
+        openExposure: "Open exposure",
+        averageOdds: "Average odds",
+        mostPlayedSport: "Most played sport",
+        mostProfitableSport: "Most profitable sport",
+        worstLosingStreak: "Worst losing streak",
+        averageEvents: "average",
+        events: "event(s)",
+        reading: "Reading",
+        caution: "Caution",
+        bookmakerOddsEditable: "Bookmaker odds can be edited before saving.",
+        save: "Save",
+        signIn: "Sign in.",
+        analysisUnavailable: "Analysis is unavailable right now.",
+        addedToJournal: "Added to Journal.",
+        saveComboUnavailable: "Unable to save this selection right now.",
+        needThreeTickets: "Add at least 3 bets to get a useful discipline read.",
+        disciplineUnavailable: "Unable to analyze your discipline right now.",
+        suggestions: "Suggestions",
+        suggestionsSubtitle: "By date, without noise.",
+        analyzeLoading: "Analyzing...",
+        quotaLoading: "Quota...",
+        limitReached: "Limit reached",
+        analyze: "Analyze",
+        risk: "Risk",
+        dates: "Dates",
+        thisWeek: "This week",
+        tokens: "Tokens",
+        buyTokens: "Buy tokens",
+        nextUsesToken: "This week's free quota is empty. The next analysis will use 1 token.",
+        weeklyQuota: `${RADAR_WEEKLY_LIMIT} / week.`,
+        quotaReachedTitle: "This week's free quota has been reached.",
+        quotaReachedDescription: "Get a token pack to keep using Radar without waiting for next week.",
+        viewJournal: "View Journal",
+        discipline: "Discipline",
+        disciplineSubtitle: "Read your habits before starting again.",
+        disciplineHint: "Reads your journal to surface bankroll habits, pace, and discipline patterns.",
+        settledShort: "Settled",
+        balance: "Balance",
+        analyzingHistory: "Analysis in progress...",
+        analyzeHistory: "Analyze my history",
+        reliableTipsHint: "Add at least 3 bets in Journal to unlock reliable guidance.",
+        strengths: "Strengths",
+        warnings: "Warnings",
+        weekActions: "This Week's Actions",
+        shiftedWindowFound: "Nothing on your date. Tested window:",
+        nothingOnDate: "Nothing on this date.",
+        verifyDatesOdds: "Check dates and odds.",
+        noSuggestion: "No suggestion on this selection.",
+        addToJournalTitle: "Add to Journal",
+        enterOddsStake: "Enter odds and stake.",
+        estimated: "Estimated",
+        bookmakerOdds: "Bookmaker odds",
+        stake: "Stake",
+        saving: "Saving...",
+        addToJournal: "Add to Journal",
+        close: "Close",
+      }
+    : {
+        dateModes: { day: "Jour", range: "Plage" },
+        noHistoryUseful: "Aucun historique utile.",
+        tickets: "tickets",
+        hitRateShort: "WR",
+        bestSportShort: "sport fort",
+        singlesShort: "simples",
+        combosShort: "combines",
+        won: "gagne",
+        lost: "perdu",
+        noHistoryDiscipline: "Aucun historique exploitable pour le moment.",
+        totalVolume: "Volume total",
+        settledBets: "Tickets regles",
+        openBets: "Paris en cours",
+        hitRate: "Reussite",
+        roi: "ROI",
+        netResult: "Bilan net",
+        averageStake: "Mise moyenne",
+        openExposure: "Exposition ouverte",
+        averageOdds: "Cote moyenne",
+        mostPlayedSport: "Sport le plus joue",
+        mostProfitableSport: "Sport le plus rentable",
+        worstLosingStreak: "Pire serie perdante",
+        averageEvents: "moyenne",
+        events: "evenement(s)",
+        reading: "Lecture",
+        caution: "Vigilance",
+        bookmakerOddsEditable: "Cote bookmaker editable avant ajout.",
+        save: "Enregistrer",
+        signIn: "Connecte-toi.",
+        analysisUnavailable: "Analyse indisponible pour le moment.",
+        addedToJournal: "Ajoute au Journal.",
+        saveComboUnavailable: "Impossible d'enregistrer cette selection pour le moment.",
+        needThreeTickets: "Ajoute au moins 3 tickets pour obtenir une lecture utile de ta discipline.",
+        disciplineUnavailable: "Impossible d'analyser ta discipline pour le moment.",
+        suggestions: "Suggestions",
+        suggestionsSubtitle: "Par date, sans bruit.",
+        analyzeLoading: "Analyse...",
+        quotaLoading: "Quota...",
+        limitReached: "Limite atteinte",
+        analyze: "Analyser",
+        risk: "Risque",
+        dates: "Dates",
+        thisWeek: "Cette semaine",
+        tokens: "Jetons",
+        buyTokens: "Acheter des jetons",
+        nextUsesToken: "Le quota gratuit de la semaine est vide. La prochaine analyse utilisera 1 jeton.",
+        weeklyQuota: `${RADAR_WEEKLY_LIMIT} / semaine.`,
+        quotaReachedTitle: "Le quota gratuit de la semaine est atteint.",
+        quotaReachedDescription: "Prends un pack de jetons pour continuer a utiliser Radar sans attendre la semaine suivante.",
+        viewJournal: "Voir le Journal",
+        discipline: "Discipline",
+        disciplineSubtitle: "Lire ses habitudes avant de relancer.",
+        disciplineHint: "Lecture de ton journal pour faire ressortir tes habitudes de bankroll, de rythme et de discipline.",
+        settledShort: "Regles",
+        balance: "Bilan",
+        analyzingHistory: "Analyse en cours...",
+        analyzeHistory: "Analyser mon historique",
+        reliableTipsHint: "Ajoute au moins 3 tickets dans le Journal pour obtenir des conseils assez fiables.",
+        strengths: "Forces",
+        warnings: "Points de Vigilance",
+        weekActions: "Actions de la Semaine",
+        shiftedWindowFound: "Rien sur ta date. Fenetre testee:",
+        nothingOnDate: "Rien sur cette date.",
+        verifyDatesOdds: "Dates et cotes a verifier.",
+        noSuggestion: "Aucune suggestion sur cette selection.",
+        addToJournalTitle: "Ajouter au Journal",
+        enterOddsStake: "Entre la cote et la mise.",
+        estimated: "Estimee",
+        bookmakerOdds: "Cote bookmaker",
+        stake: "Mise",
+        saving: "Enregistrement...",
+        addToJournal: "Ajouter au Journal",
+        close: "Fermer",
+      };
+}
 
 const buyTokensButtonClass =
   "rounded-full border border-[#ffd248]/45 bg-[linear-gradient(135deg,#fff1a8_0%,#ffd248_36%,#ffb020_100%)] text-[#3b2400] shadow-[0_16px_42px_rgba(255,176,32,0.24)] hover:brightness-[1.03] hover:shadow-[0_20px_48px_rgba(255,176,32,0.3)]";
@@ -125,9 +276,11 @@ function parseDecimal(value: string) {
   return Number.parseFloat(value.replace(",", "."));
 }
 
-function buildRadarHistorySummary(bets: BetRow[]) {
+function buildRadarHistorySummary(bets: BetRow[], language: AppLanguage) {
+  const copy = getRadarPageCopy(language);
+
   if (!bets.length) {
-    return "Aucun historique utile.";
+    return copy.noHistoryUseful;
   }
 
   const metrics = calculateBetMetrics(bets);
@@ -135,37 +288,41 @@ function buildRadarHistorySummary(bets: BetRow[]) {
   const profitableSport = getMostProfitableSport(bets);
 
   return [
-    `${bets.length} tickets`,
-    `WR ${formatPercent(metrics.winRate)}`,
+    `${bets.length} ${copy.tickets}`,
+    `${copy.hitRateShort} ${formatPercent(metrics.winRate)}`,
     `net ${formatAmount(metrics.net)}`,
-    `sport fort ${profitableSport}`,
-    `simples ${kindBreakdown.single.count}`,
-    `combines ${kindBreakdown.combo.count}`,
+    `${copy.bestSportShort} ${profitableSport}`,
+    `${copy.singlesShort} ${kindBreakdown.single.count}`,
+    `${copy.combosShort} ${kindBreakdown.combo.count}`,
   ].join(". ");
 }
 
-function buildRecentSettledResults(bets: BetRow[]) {
+function buildRecentSettledResults(bets: BetRow[], language: AppLanguage) {
+  const copy = getRadarPageCopy(language);
+
   return [...bets]
     .filter((bet) => bet.status !== "pending")
     .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())
     .slice(0, 10)
     .map((bet) => {
       if (bet.status === "won") {
-        return "gagne";
+        return copy.won;
       }
 
       if (bet.status === "lost") {
-        return "perdu";
+        return copy.lost;
       }
 
       return "cashout";
     });
 }
 
-function buildRadarDisciplineInput(bets: BetRow[]) {
+function buildRadarDisciplineInput(bets: BetRow[], language: AppLanguage) {
+  const copy = getRadarPageCopy(language);
+
   if (!bets.length) {
     return {
-      statsSummary: "Aucun historique exploitable pour le moment.",
+      statsSummary: copy.noHistoryDiscipline,
       recentResults: [],
     };
   }
@@ -179,22 +336,22 @@ function buildRadarDisciplineInput(bets: BetRow[]) {
 
   return {
     statsSummary: [
-      `Volume total ${bets.length} tickets`,
-      `Tickets regles ${settledCount}`,
-      `Paris en cours ${metrics.pendingCount}`,
-      `Reussite ${formatPercent(metrics.winRate)}`,
-      `ROI ${formatPercent(metrics.roi, true)}`,
-      `Bilan net ${formatAmount(metrics.net)}`,
-      `Mise moyenne ${formatAmount(averageStake)}`,
-      `Exposition ouverte ${formatAmount(metrics.openExposure)}`,
-      `Cote moyenne ${metrics.averageOdds.toFixed(2)}`,
-      `Sport le plus joue ${metrics.favoriteSport}`,
-      `Sport le plus rentable ${profitableSport}`,
-      `Pire serie perdante ${worstLosingStreak}`,
-      `Simples ${kindBreakdown.single.count} tickets, net ${formatAmount(kindBreakdown.single.net)}, reussite ${formatPercent(kindBreakdown.single.winRate)}`,
-      `Combines ${kindBreakdown.combo.count} tickets, net ${formatAmount(kindBreakdown.combo.net)}, reussite ${formatPercent(kindBreakdown.combo.winRate)}, moyenne ${kindBreakdown.combo.averageEventCount.toFixed(1)} evenement(s)`,
+      `${copy.totalVolume} ${bets.length} ${copy.tickets}`,
+      `${copy.settledBets} ${settledCount}`,
+      `${copy.openBets} ${metrics.pendingCount}`,
+      `${copy.hitRate} ${formatPercent(metrics.winRate)}`,
+      `${copy.roi} ${formatPercent(metrics.roi, true)}`,
+      `${copy.netResult} ${formatAmount(metrics.net)}`,
+      `${copy.averageStake} ${formatAmount(averageStake)}`,
+      `${copy.openExposure} ${formatAmount(metrics.openExposure)}`,
+      `${copy.averageOdds} ${metrics.averageOdds.toFixed(2)}`,
+      `${copy.mostPlayedSport} ${metrics.favoriteSport}`,
+      `${copy.mostProfitableSport} ${profitableSport}`,
+      `${copy.worstLosingStreak} ${worstLosingStreak}`,
+      `${getBetKindLabel("single")} ${kindBreakdown.single.count} ${copy.tickets}, net ${formatAmount(kindBreakdown.single.net)}, ${copy.hitRate.toLowerCase()} ${formatPercent(kindBreakdown.single.winRate)}`,
+      `${getBetKindLabel("combo")} ${kindBreakdown.combo.count} ${copy.tickets}, net ${formatAmount(kindBreakdown.combo.net)}, ${copy.hitRate.toLowerCase()} ${formatPercent(kindBreakdown.combo.winRate)}, ${copy.averageEvents} ${kindBreakdown.combo.averageEventCount.toFixed(1)} ${copy.events}`,
     ].join(". "),
-    recentResults: buildRecentSettledResults(bets),
+    recentResults: buildRecentSettledResults(bets, language),
   };
 }
 
@@ -269,19 +426,22 @@ function ModeSwitch({
   value: RadarDateMode;
   onChange: (nextValue: RadarDateMode) => void;
 }) {
+  const language = useLanguageStore((state) => state.language);
+  const copy = getRadarPageCopy(language);
+
   return (
     <div className="grid grid-cols-2 gap-1 rounded-[16px] bg-white/4 p-1">
-      {radarDateModeOptions.map((option) => (
+      {(["day", "range"] as RadarDateMode[]).map((option) => (
         <button
-          key={option.value}
+          key={option}
           type="button"
           className={cn(
             "rounded-[12px] px-3 py-2 text-sm font-medium transition",
-            value === option.value ? "bg-white/8 text-foreground" : "text-muted-foreground hover:text-foreground",
+            value === option ? "bg-white/8 text-foreground" : "text-muted-foreground hover:text-foreground",
           )}
-          onClick={() => onChange(option.value)}
+          onClick={() => onChange(option)}
         >
-          {option.label}
+          {copy.dateModes[option]}
         </button>
       ))}
     </div>
@@ -307,6 +467,9 @@ function SuggestionCard({
   accentBorder: string;
   onSave: () => void;
 }) {
+  const language = useLanguageStore((state) => state.language);
+  const copy = getRadarPageCopy(language);
+
   return (
     <div className="surface hairline rounded-[22px] px-4 py-4 shadow-soft">
       <div className="flex items-start justify-between gap-3">
@@ -356,16 +519,16 @@ function SuggestionCard({
       </div>
 
       <div className="mt-4 rounded-[18px] border px-3 py-3" style={{ borderColor: accentBorder }}>
-        <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Lecture</p>
+        <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">{copy.reading}</p>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">{suggestion.rationale}</p>
-        <p className="mt-3 text-xs leading-5 text-muted-foreground/90">Vigilance: {suggestion.caution}</p>
+        <p className="mt-3 text-xs leading-5 text-muted-foreground/90">{copy.caution}: {suggestion.caution}</p>
       </div>
 
       <div className="mt-4 flex items-center justify-between gap-3">
-        <p className="text-xs text-muted-foreground">Cote bookmaker editable avant ajout.</p>
+        <p className="text-xs text-muted-foreground">{copy.bookmakerOddsEditable}</p>
         <Button variant="warning" size="sm" className="rounded-full" onClick={onSave}>
           <BookmarkPlus className="mr-2 h-4 w-4" />
-          Enregistrer
+          {copy.save}
         </Button>
       </div>
     </div>
@@ -373,6 +536,8 @@ function SuggestionCard({
 }
 
 export function RadarPage() {
+  const language = useLanguageStore((state) => state.language);
+  const copy = getRadarPageCopy(language);
   const navigate = useNavigate();
   const session = useAuthStore((state) => state.session);
   const { bets, refresh: refreshBets } = useBets();
@@ -417,8 +582,8 @@ export function RadarPage() {
   const risk: RadarRiskValue = radarRiskLevels[riskIndex]?.value ?? "balanced";
   const riskMeta = useMemo(() => getRiskMeta(risk), [risk]);
   const analysisRiskMeta = useMemo(() => getRiskMeta(analysisRisk), [analysisRisk]);
-  const historySummary = useMemo(() => buildRadarHistorySummary(bets), [bets]);
-  const disciplineInput = useMemo(() => buildRadarDisciplineInput(bets), [bets]);
+  const historySummary = useMemo(() => buildRadarHistorySummary(bets, language), [bets, language]);
+  const disciplineInput = useMemo(() => buildRadarDisciplineInput(bets, language), [bets, language]);
   const disciplineMetrics = useMemo(() => calculateBetMetrics(bets), [bets]);
   const disciplineSettledCount = useMemo(() => bets.filter((bet) => bet.status !== "pending").length, [bets]);
   const parsedBookmakerOdds = parseDecimal(bookmakerOdds);
@@ -531,7 +696,7 @@ export function RadarPage() {
     if (!session?.user) {
       setHasSubmitted(true);
       setSuggestions([]);
-      setError("Connecte-toi.");
+      setError(copy.signIn);
       return;
     }
 
@@ -549,6 +714,7 @@ export function RadarPage() {
         startDate: requestedWindow.startDate,
         endDate: requestedWindow.endDate,
         historySummary,
+        language,
       });
 
       setAnalysisRisk(risk);
@@ -564,7 +730,7 @@ export function RadarPage() {
       setSuggestions([]);
       setAnalysisWindowShifted(false);
       setAnalysisWindowNote("");
-      setError(getErrorMessage(nextError, "Analyse indisponible pour le moment."));
+      setError(getErrorMessage(nextError, copy.analysisUnavailable));
     } finally {
       setIsLoading(false);
     }
@@ -599,9 +765,9 @@ export function RadarPage() {
       setSelectedSuggestion(null);
       setBookmakerOdds("");
       setStakeAmount("");
-      setSaveMessage("Ajoute au Journal.");
+      setSaveMessage(copy.addedToJournal);
     } catch (nextError) {
-      setSaveError(getErrorMessage(nextError, "Impossible d'enregistrer ce combine pour le moment."));
+      setSaveError(getErrorMessage(nextError, copy.saveComboUnavailable));
     } finally {
       setIsSavingSuggestion(false);
     }
@@ -610,13 +776,13 @@ export function RadarPage() {
   async function handleAnalyzeDiscipline() {
     if (!session?.user) {
       setDisciplineAnalysis(null);
-      setDisciplineError("Connecte-toi.");
+      setDisciplineError(copy.signIn);
       return;
     }
 
     if (!canAnalyzeDiscipline) {
       setDisciplineAnalysis(null);
-      setDisciplineError("Ajoute au moins 3 tickets pour obtenir une lecture utile de ta discipline.");
+      setDisciplineError(copy.needThreeTickets);
       return;
     }
 
@@ -624,11 +790,11 @@ export function RadarPage() {
     setDisciplineError(null);
 
     try {
-      const result = await fetchRadarDisciplineAnalysis(disciplineInput);
+      const result = await fetchRadarDisciplineAnalysis({ ...disciplineInput, language });
       setDisciplineAnalysis(result);
     } catch (nextError) {
       setDisciplineAnalysis(null);
-      setDisciplineError(getErrorMessage(nextError, "Impossible d'analyser ta discipline pour le moment."));
+      setDisciplineError(getErrorMessage(nextError, copy.disciplineUnavailable));
     } finally {
       setIsAnalyzingDiscipline(false);
     }
@@ -640,8 +806,8 @@ export function RadarPage() {
         <div className="surface hairline rounded-[24px] px-4 py-4 shadow-soft">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">Suggestions</p>
-              <p className="mt-2 text-sm font-medium text-foreground">Par date, sans bruit.</p>
+              <p className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">{copy.suggestions}</p>
+              <p className="mt-2 text-sm font-medium text-foreground">{copy.suggestionsSubtitle}</p>
             </div>
 
             <div
@@ -671,14 +837,14 @@ export function RadarPage() {
                 {isLoading ? (
                   <>
                     <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
-                    Analyse...
+                    {copy.analyzeLoading}
                   </>
                 ) : isLoadingUsage ? (
-                  "Quota..."
+                  copy.quotaLoading
                 ) : isRadarLimitReached ? (
-                  "Limite atteinte"
+                  copy.limitReached
                 ) : (
-                  "Analyser"
+                  copy.analyze
                 )}
               </Button>
             </div>
@@ -698,7 +864,7 @@ export function RadarPage() {
 
             <div className="rounded-[18px] bg-white/4 px-4 py-4">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm text-foreground">Risque</p>
+                <p className="text-sm text-foreground">{copy.risk}</p>
                 <Badge
                   className="border-0"
                   style={{
@@ -706,7 +872,7 @@ export function RadarPage() {
                     color: riskMeta.color,
                   }}
                 >
-                  {getRiskLabel(risk)}
+                  {getRiskLabel(risk, language)}
                 </Badge>
               </div>
 
@@ -733,39 +899,39 @@ export function RadarPage() {
                       level.value === risk ? "font-semibold text-foreground" : "opacity-70",
                     )}
                   >
-                    {level.label}
+                    {getRiskLabel(level.value, language)}
                   </span>
                 ))}
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <MetaPill>{`Dates ${requestedWindowLabel}`}</MetaPill>
-              {usageStatus ? <MetaPill>{`Cette semaine ${usageStatus.usedCount}/${usageStatus.limit}`}</MetaPill> : null}
-              {usageStatus ? <MetaPill>{`Jetons ${usageStatus.tokenBalance}`}</MetaPill> : null}
+              <MetaPill>{`${copy.dates} ${requestedWindowLabel}`}</MetaPill>
+              {usageStatus ? <MetaPill>{`${copy.thisWeek} ${usageStatus.usedCount}/${usageStatus.limit}`}</MetaPill> : null}
+              {usageStatus ? <MetaPill>{`${copy.tokens} ${usageStatus.tokenBalance}`}</MetaPill> : null}
               <Button size="sm" className={buyTokensButtonClass} onClick={() => setIsCreditsModalOpen(true)}>
                 <Sparkles className="mr-2 h-4 w-4" />
-                Acheter des jetons
+                {copy.buyTokens}
               </Button>
             </div>
 
             <p className="px-1 text-xs leading-5 text-muted-foreground">
               {usageStatus?.nextAccessMode === "token"
-                ? "Le quota gratuit de la semaine est vide. La prochaine analyse utilisera 1 jeton."
-                : `${RADAR_WEEKLY_LIMIT} / semaine.`}
+                ? copy.nextUsesToken
+                : copy.weeklyQuota}
             </p>
           </div>
         </div>
 
         {shouldShowTokenCta ? (
           <div className="rounded-[20px] border border-warning/18 bg-warning/8 px-4 py-4 shadow-soft">
-            <p className="text-sm text-foreground">Le quota gratuit de la semaine est atteint.</p>
+            <p className="text-sm text-foreground">{copy.quotaReachedTitle}</p>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              Prends un pack de jetons pour continuer a utiliser Radar sans attendre la semaine suivante.
+              {copy.quotaReachedDescription}
             </p>
             <Button size="sm" className={`mt-3 ${buyTokensButtonClass}`} onClick={() => setIsCreditsModalOpen(true)}>
               <Sparkles className="mr-2 h-4 w-4" />
-              Acheter des jetons
+              {copy.buyTokens}
             </Button>
           </div>
         ) : null}
@@ -774,7 +940,7 @@ export function RadarPage() {
           <div className="rounded-[20px] border border-positive/18 bg-positive/8 px-4 py-4 shadow-soft">
             <p className="text-sm text-foreground">{saveMessage}</p>
             <Button variant="positive" size="sm" className="mt-3 rounded-full" onClick={() => navigate("/journal")}>
-              Voir le Journal
+              {copy.viewJournal}
               <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
           </div>
@@ -783,8 +949,8 @@ export function RadarPage() {
         <div className="surface hairline rounded-[24px] px-4 py-4 shadow-soft">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">Discipline</p>
-              <p className="mt-2 text-sm font-medium text-foreground">Lire ses habitudes avant de relancer.</p>
+              <p className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">{copy.discipline}</p>
+              <p className="mt-2 text-sm font-medium text-foreground">{copy.disciplineSubtitle}</p>
             </div>
 
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/6 text-foreground">
@@ -793,14 +959,14 @@ export function RadarPage() {
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            <MetaPill>{`${bets.length} tickets`}</MetaPill>
-            <MetaPill>{`Regles ${disciplineSettledCount}`}</MetaPill>
-            <MetaPill>{`Reussite ${formatPercent(disciplineMetrics.winRate)}`}</MetaPill>
-            <MetaPill>{`Bilan ${formatAmount(disciplineMetrics.net)}`}</MetaPill>
+            <MetaPill>{`${bets.length} ${copy.tickets}`}</MetaPill>
+            <MetaPill>{`${copy.settledShort} ${disciplineSettledCount}`}</MetaPill>
+            <MetaPill>{`${copy.hitRate} ${formatPercent(disciplineMetrics.winRate)}`}</MetaPill>
+            <MetaPill>{`${copy.balance} ${formatAmount(disciplineMetrics.net)}`}</MetaPill>
           </div>
 
           <p className="mt-4 text-xs leading-5 text-muted-foreground">
-            Lecture de ton journal pour faire ressortir tes habitudes de bankroll, de rythme et de discipline.
+            {copy.disciplineHint}
           </p>
 
           <Button
@@ -812,16 +978,16 @@ export function RadarPage() {
             {isAnalyzingDiscipline ? (
               <>
                 <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
-                Analyse en cours...
+                {copy.analyzingHistory}
               </>
             ) : (
-              "Analyser mon historique"
+              copy.analyzeHistory
             )}
           </Button>
 
           {!canAnalyzeDiscipline ? (
             <p className="mt-3 text-xs leading-5 text-muted-foreground">
-              Ajoute au moins 3 tickets dans le Journal pour obtenir des conseils assez fiables.
+              {copy.reliableTipsHint}
             </p>
           ) : null}
 
@@ -833,9 +999,9 @@ export function RadarPage() {
                 <p className="text-sm leading-6 text-foreground">{disciplineAnalysis.summary}</p>
               </div>
 
-              <DisciplinePanel title="Forces" items={disciplineAnalysis.strengths} tone="positive" />
-              <DisciplinePanel title="Points de Vigilance" items={disciplineAnalysis.warnings} tone="warning" />
-              <DisciplinePanel title="Actions de la Semaine" items={disciplineAnalysis.actions} tone="neutral" />
+              <DisciplinePanel title={copy.strengths} items={disciplineAnalysis.strengths} tone="positive" />
+              <DisciplinePanel title={copy.warnings} items={disciplineAnalysis.warnings} tone="warning" />
+              <DisciplinePanel title={copy.weekActions} items={disciplineAnalysis.actions} tone="neutral" />
             </div>
           ) : null}
         </div>
@@ -844,8 +1010,8 @@ export function RadarPage() {
           <div className="rounded-[20px] border border-warning/18 bg-warning/8 px-4 py-4 shadow-soft">
             <p className="text-sm text-foreground">
               {analysisWindowShifted
-                ? `Rien sur ta date. Fenetre testee: ${analysisWindowLabel}.`
-                : "Rien sur cette date."}
+                ? `${copy.shiftedWindowFound} ${analysisWindowLabel}.`
+                : copy.nothingOnDate}
             </p>
             {analysisWindowNote ? <p className="mt-2 text-xs leading-5 text-muted-foreground">{analysisWindowNote}</p> : null}
           </div>
@@ -877,13 +1043,13 @@ export function RadarPage() {
               />
             ))}
 
-            <p className="px-1 text-xs text-muted-foreground">Dates et cotes a verifier.</p>
+            <p className="px-1 text-xs text-muted-foreground">{copy.verifyDatesOdds}</p>
           </div>
         ) : null}
 
         {isLoading === false && hasSubmitted && suggestions.length === 0 && error === null ? (
           <div className="surface hairline rounded-[20px] px-4 py-5 shadow-soft">
-            <p className="text-sm text-muted-foreground">Aucune suggestion sur cette selection.</p>
+            <p className="text-sm text-muted-foreground">{copy.noSuggestion}</p>
           </div>
         ) : null}
       </PageShell>
@@ -893,7 +1059,7 @@ export function RadarPage() {
           <>
             <motion.button
               type="button"
-              aria-label="Fermer"
+              aria-label={copy.close}
               className="fixed inset-0 z-40 bg-background/56 backdrop-blur-md"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -914,14 +1080,15 @@ export function RadarPage() {
 
                 <div className="mt-4 flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-base font-semibold text-foreground">Ajouter au Journal</p>
-                    <p className="mt-1 text-sm text-muted-foreground">Entre la cote et la mise.</p>
+                    <p className="text-base font-semibold text-foreground">{copy.addToJournalTitle}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">{copy.enterOddsStake}</p>
                   </div>
 
                   <button
                     type="button"
                     className="flex h-10 w-10 items-center justify-center rounded-full bg-white/5 text-muted-foreground transition hover:text-foreground"
                     onClick={closeSaveSheet}
+                    aria-label={copy.close}
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -948,7 +1115,7 @@ export function RadarPage() {
                         color: analysisRiskMeta.color,
                       }}
                     >
-                      Estimee {selectedSuggestion.odds}
+                      {copy.estimated} {selectedSuggestion.odds}
                     </Badge>
                   </div>
                 </div>
@@ -959,7 +1126,7 @@ export function RadarPage() {
                     min="0"
                     step="0.01"
                     inputMode="decimal"
-                    placeholder="Cote bookmaker"
+                    placeholder={copy.bookmakerOdds}
                     value={bookmakerOdds}
                     onChange={(event) => setBookmakerOdds(event.target.value)}
                   />
@@ -969,7 +1136,7 @@ export function RadarPage() {
                     min="0"
                     step="0.01"
                     inputMode="decimal"
-                    placeholder="Mise"
+                    placeholder={copy.stake}
                     value={stakeAmount}
                     onChange={(event) => setStakeAmount(event.target.value)}
                   />
@@ -977,7 +1144,7 @@ export function RadarPage() {
                   {saveError ? <p className="px-1 text-sm text-negative/90">{saveError}</p> : null}
 
                   <Button type="submit" size="lg" className="w-full" disabled={isSavingSuggestion || !canSaveSuggestion}>
-                    {isSavingSuggestion ? "Enregistrement..." : "Ajouter au Journal"}
+                    {isSavingSuggestion ? copy.saving : copy.addToJournal}
                   </Button>
                 </form>
               </div>
