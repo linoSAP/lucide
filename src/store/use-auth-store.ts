@@ -3,7 +3,7 @@ import { create } from "zustand";
 import { getStoredLanguagePreference } from "@/lib/language";
 import { getSupabaseOrThrow, isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { normalizeErrorMessage } from "@/lib/utils";
-import type { ProfileRow, ProfileUpdate } from "@/types/supabase";
+import type { ProfileInsert, ProfileRow, ProfileUpdate } from "@/types/supabase";
 
 type AuthStatus = "loading" | "ready";
 
@@ -242,7 +242,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     const missingCurrencyColumn = Boolean(error && values.currency && isMissingProfileColumnError(error.message, "currency"));
 
     if (error && (missingLanguageColumn || missingCurrencyColumn)) {
-      const retryPayload: ProfileUpdate = {
+      const retryPayload: ProfileInsert = {
         id: userId,
         username: values.username,
         wave_number: values.wave_number,

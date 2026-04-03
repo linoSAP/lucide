@@ -244,6 +244,7 @@ export interface Database {
 
 export type BetRow = Database["public"]["Tables"]["bets"]["Row"];
 export type BetInsert = Database["public"]["Tables"]["bets"]["Insert"];
+export type ProfileInsert = Database["public"]["Tables"]["profiles"]["Insert"];
 export type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];
 export type ProfileUpdate = Database["public"]["Tables"]["profiles"]["Update"];
 export type RadarUsageRow = Database["public"]["Tables"]["radar_usage"]["Row"];
