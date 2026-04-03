@@ -4,21 +4,27 @@ import { LockKeyhole, Mail, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { getCopy } from "@/lib/copy";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/use-auth-store";
+import { useLanguageStore } from "@/store/use-language-store";
 import logo from "@/assets/lucide_logo.svg";
 
 type AuthMode = "sign-in" | "sign-up";
+type LoginMessageKind = "verify" | "ready" | null;
 
 export function LoginScreen() {
   const signInWithPassword = useAuthStore((state) => state.signInWithPassword);
   const signUpWithPassword = useAuthStore((state) => state.signUpWithPassword);
+  const language = useLanguageStore((state) => state.language);
+  const copy = getCopy(language);
   const [mode, setMode] = useState<AuthMode>("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [messageKind, setMessageKind] = useState<LoginMessageKind>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const isSignUp = mode === "sign-up";
@@ -28,6 +34,7 @@ export function LoginScreen() {
     setMode(nextMode);
     setError(null);
     setMessage(null);
+    setMessageKind(null);
     setPassword("");
   }
 
@@ -36,6 +43,7 @@ export function LoginScreen() {
     setIsSubmitting(true);
     setError(null);
     setMessage(null);
+    setMessageKind(null);
 
     if (isSignUp) {
       const result = await signUpWithPassword(email.trim(), password);
@@ -49,10 +57,12 @@ export function LoginScreen() {
       setPassword("");
 
       if (result.requiresEmailConfirmation) {
-        setMessage(`Compte cree. Verifie ton email pour activer l'acces a ${email.trim()}.`);
+        setMessage(copy.login.createdAccountVerify(email.trim()));
+        setMessageKind("verify");
         setMode("sign-in");
       } else {
-        setMessage("Compte cree. Connexion en cours...");
+        setMessage(copy.login.createdAccountConnecting);
+        setMessageKind("ready");
       }
 
       setIsSubmitting(false);
@@ -71,10 +81,10 @@ export function LoginScreen() {
     setIsSubmitting(false);
   }
 
-  const title = isSignUp ? "Creer un compte" : "Connexion";
+  const title = isSignUp ? copy.login.titleSignUp : copy.login.titleSignIn;
   const description = isSignUp
-    ? "Inscription simple, rapide et propre. Email, mot de passe, et c'est parti."
-    : "Connecte-toi avec ton email et ton mot de passe.";
+    ? copy.login.descriptionSignUp
+    : copy.login.descriptionSignIn;
 
   return (
     <div className="relative flex min-h-screen items-center justify-center px-4 py-12">
@@ -108,7 +118,7 @@ export function LoginScreen() {
                 )}
                 onClick={() => switchMode("sign-in")}
               >
-                Connexion
+                {copy.login.signInTab}
               </button>
               <button
                 type="button"
@@ -118,8 +128,13 @@ export function LoginScreen() {
                 )}
                 onClick={() => switchMode("sign-up")}
               >
-                Creer un compte
+                {copy.login.signUpTab}
               </button>
+            </div>
+
+            <div className="mt-5">
+              <h1 className="text-2xl font-bold tracking-tight text-foreground">{title}</h1>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
             </div>
 
             {message ? (
@@ -127,7 +142,7 @@ export function LoginScreen() {
                 <div className="flex items-center gap-3 text-primary">
                   <Mail className="h-5 w-5" />
                   <p className="text-sm font-medium">
-                    {message.includes("Verifie ton email") ? "Verifie ton email" : "Compte pret"}
+                    {messageKind === "verify" ? copy.login.verifyEmailTitle : copy.login.accountReadyTitle}
                   </p>
                 </div>
                 <p className="text-sm leading-6 text-muted-foreground">{message}</p>
@@ -137,7 +152,7 @@ export function LoginScreen() {
             <form className="mt-4 space-y-4" onSubmit={handleSubmit}>
               <div className="space-y-2">
                 <label htmlFor="email" className="text-sm text-muted-foreground">
-                  Email
+                  {copy.login.emailLabel}
                 </label>
                 <Input
                   id="email"
@@ -145,7 +160,7 @@ export function LoginScreen() {
                   autoComplete="email"
                   autoCapitalize="none"
                   spellCheck={false}
-                  placeholder="toi@exemple.com"
+                  placeholder={copy.login.emailPlaceholder}
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                 />
@@ -153,14 +168,14 @@ export function LoginScreen() {
 
               <div className="space-y-2">
                 <label htmlFor="password" className="text-sm text-muted-foreground">
-                  Mot de passe
+                  {copy.login.passwordLabel}
                 </label>
                 <div className="relative">
                   <Input
                     id="password"
                     type="password"
                     autoComplete={isSignUp ? "new-password" : "current-password"}
-                    placeholder="Au moins 6 caracteres"
+                    placeholder={copy.login.passwordPlaceholder}
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
                   />
@@ -170,13 +185,13 @@ export function LoginScreen() {
 
               {isSignUp ? (
                 <p className="text-xs leading-6 text-muted-foreground">
-                  Mot de passe libre, minimum 6 caracteres.
+                  {copy.login.passwordHint}
                 </p>
               ) : null}
 
               {!isSupabaseConfigured ? (
                 <p className="rounded-[14px] bg-negative/10 px-4 py-3 text-sm text-negative">
-                  Ajoute `VITE_SUPABASE_URL` et `VITE_SUPABASE_ANON_KEY` dans `.env` pour activer la connexion.
+                  {copy.login.envMissing}
                 </p>
               ) : null}
 
@@ -190,11 +205,11 @@ export function LoginScreen() {
               >
                 {isSubmitting
                   ? isSignUp
-                    ? "Creation en cours..."
-                    : "Connexion en cours..."
+                    ? copy.login.signingUp
+                    : copy.login.signingIn
                   : isSignUp
-                    ? "Creer mon compte"
-                    : "Se connecter"}
+                    ? copy.login.signUpCta
+                    : copy.login.signInCta}
               </Button>
             </form>
           </CardContent>

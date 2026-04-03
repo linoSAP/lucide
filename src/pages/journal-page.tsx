@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { getStoredCurrencyPreference } from "@/lib/currency";
 import {
   createBet,
   getBetKindLabel,
@@ -226,6 +227,7 @@ function BetGridCard({
 }
 
 export function JournalPage() {
+  const activeCurrencyCode = getStoredCurrencyPreference();
   const session = useAuthStore((state) => state.session);
   const { bets, isLoading, error: loadError, refresh } = useBets();
   const [viewMode, setViewMode] = useState<JournalViewMode>("cards");
@@ -677,7 +679,7 @@ export function JournalPage() {
                       min="0"
                       step="1"
                       inputMode="numeric"
-                      placeholder="Mise FCFA"
+                      placeholder={`Mise ${activeCurrencyCode}`}
                       value={form.stake}
                       onChange={(event) => setForm((current) => ({ ...current, stake: event.target.value }))}
                     />
@@ -717,7 +719,7 @@ export function JournalPage() {
                         min="0"
                         step="1"
                         inputMode="numeric"
-                        placeholder="Montant cashout"
+                        placeholder={`Montant ${activeCurrencyCode}`}
                         value={form.cashoutAmount}
                         onChange={(event) => setForm((current) => ({ ...current, cashoutAmount: event.target.value }))}
                       />

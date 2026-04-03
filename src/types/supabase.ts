@@ -155,18 +155,24 @@ export interface Database {
           id: string;
           username: string | null;
           wave_number: string | null;
+          language: "fr" | "en";
+          currency: string;
           created_at: string;
         };
         Insert: {
           id: string;
           username?: string | null;
           wave_number?: string | null;
+          language?: "fr" | "en";
+          currency?: string;
           created_at?: string;
         };
         Update: {
           id?: string;
           username?: string | null;
           wave_number?: string | null;
+          language?: "fr" | "en";
+          currency?: string;
           created_at?: string;
         };
         Relationships: [];

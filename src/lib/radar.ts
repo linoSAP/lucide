@@ -1,5 +1,6 @@
 import { getSupabaseOrThrow, isSupabaseConfigured } from "@/lib/supabase";
 import type { RadarAccessMode } from "@/types/supabase";
+import { normalizeErrorMessage } from "@/lib/utils";
 
 export const radarSports = ["Football", "Basketball", "Tennis"] as const;
 export const RADAR_WEEKLY_LIMIT = 2;
@@ -117,6 +118,10 @@ export function getRiskMeta(risk: RadarRiskValue) {
 
 export function getRiskLabel(risk: RadarRiskValue) {
   return getRiskMeta(risk).label;
+}
+
+function createRadarClientError(message: string, fallback: string) {
+  return new Error(normalizeErrorMessage(message, fallback));
 }
 
 function getDoualaDateParts(date = new Date()) {
@@ -257,7 +262,7 @@ export async function getRadarUsageStatus(userId: string): Promise<RadarUsageSta
       return normalizeRadarUsageStatus(readLocalRadarUsageCount(userId, usedOn), usedOn, 0);
     }
 
-    throw new Error(error.message);
+    throw createRadarClientError(error.message, "Impossible de verifier le quota Radar pour le moment.");
   }
 
   const { data: tokenBalanceValue, error: tokenBalanceError } = await client.rpc("get_radar_token_balance", {});
@@ -267,7 +272,7 @@ export async function getRadarUsageStatus(userId: string): Promise<RadarUsageSta
       return normalizeRadarUsageStatus(count ?? 0, usedOn, 0);
     }
 
-    throw new Error(tokenBalanceError.message);
+    throw createRadarClientError(tokenBalanceError.message, "Impossible de verifier le solde Radar pour le moment.");
   }
 
   return normalizeRadarUsageStatus(count ?? 0, usedOn, Number(tokenBalanceValue ?? 0));
@@ -292,7 +297,7 @@ export async function claimRadarUsage(userId: string): Promise<RadarUsageReserva
       return claimLocalRadarUsage(userId, usedOn);
     }
 
-    throw new Error(error.message);
+    throw createRadarClientError(error.message, "Impossible de verifier le quota Radar de la semaine.");
   }
 
   const payload = Array.isArray(data) ? data[0] : data;
@@ -347,7 +352,7 @@ export async function releaseRadarUsage(usageId: string, accessMode: RadarAccess
       return;
     }
 
-    throw new Error(error.message);
+    throw createRadarClientError(error.message, "Impossible de restaurer l'acces Radar pour le moment.");
   }
 }
 
@@ -396,7 +401,7 @@ export async function redeemRadarTokenCode(plainCode: string): Promise<RadarToke
       throw new Error("Ton compte doit avoir un email valide.");
     }
 
-    throw new Error(error.message);
+    throw createRadarClientError(error.message, "Impossible d'activer ce code pour le moment.");
   }
 
   const payload = Array.isArray(data) ? data[0] : data;
@@ -420,7 +425,7 @@ async function getRadarAccessToken() {
   const { data: sessionData, error: sessionError } = await client.auth.getSession();
 
   if (sessionError) {
-    throw new Error(sessionError.message);
+    throw createRadarClientError(sessionError.message, "Session invalide. Reconnecte-toi.");
   }
 
   const accessToken = sessionData.session?.access_token;
@@ -475,7 +480,7 @@ async function postAuthorizedRadarRequest<TResponse>(options: {
   const payload = (await response.json().catch(() => null)) as ({ error?: string } & TResponse) | null;
 
   if (!response.ok) {
-    throw new Error(payload?.error ?? options.fallbackMessage);
+    throw createRadarClientError(payload?.error ?? "", options.fallbackMessage);
   }
 
   return (payload ?? {}) as TResponse;

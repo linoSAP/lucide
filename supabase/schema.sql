@@ -25,6 +25,8 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   username text,
   wave_number text,
+  language text not null default 'fr',
+  currency text not null default 'XAF',
   created_at timestamptz not null default timezone('utc'::text, now())
 );
 
@@ -79,14 +81,40 @@ create table if not exists public.radar_token_codes (
 -- Compatibilite avec les projets deja initialises avant les derniers patchs.
 alter table public.profiles add column if not exists username text;
 alter table public.profiles add column if not exists wave_number text;
+alter table public.profiles add column if not exists language text;
+alter table public.profiles add column if not exists currency text;
 alter table public.profiles add column if not exists created_at timestamptz;
 alter table public.profiles alter column created_at set default timezone('utc'::text, now());
+
+update public.profiles
+set language = 'fr'
+where language is null or language not in ('fr', 'en');
+
+update public.profiles
+set currency = 'XAF'
+where currency is null or char_length(currency) <> 3;
 
 update public.profiles
 set created_at = timezone('utc'::text, now())
 where created_at is null;
 
+alter table public.profiles alter column language set default 'fr';
+alter table public.profiles alter column language set not null;
+alter table public.profiles alter column currency set default 'XAF';
+alter table public.profiles alter column currency set not null;
 alter table public.profiles alter column created_at set not null;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'profiles_language_check'
+  ) then
+    alter table public.profiles
+      add constraint profiles_language_check check (language in ('fr', 'en'));
+  end if;
+end $$;
 
 alter table public.bets add column if not exists created_at timestamptz;
 alter table public.bets add column if not exists sport text;

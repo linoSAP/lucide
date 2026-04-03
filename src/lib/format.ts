@@ -1,23 +1,56 @@
-const moneyFormatter = new Intl.NumberFormat("fr-CM", {
-  maximumFractionDigits: 0,
-});
+import { getStoredCurrencyPreference } from "@/lib/currency";
+import { getStoredLanguagePreference, type AppLanguage } from "@/lib/language";
 
-const dateFormatter = new Intl.DateTimeFormat("fr-CM", {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
+const localeByLanguage: Record<AppLanguage, string> = {
+  fr: "fr-CM",
+  en: "en-CM",
+};
 
-const shortDateFormatter = new Intl.DateTimeFormat("fr-CM", {
-  day: "numeric",
-  month: "short",
-});
+const moneyFormatters: Record<AppLanguage, Intl.NumberFormat> = {
+  fr: new Intl.NumberFormat(localeByLanguage.fr, {
+    maximumFractionDigits: 0,
+  }),
+  en: new Intl.NumberFormat(localeByLanguage.en, {
+    maximumFractionDigits: 0,
+  }),
+};
+
+const dateFormatters: Record<AppLanguage, Intl.DateTimeFormat> = {
+  fr: new Intl.DateTimeFormat(localeByLanguage.fr, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }),
+  en: new Intl.DateTimeFormat(localeByLanguage.en, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }),
+};
+
+const shortDateFormatters: Record<AppLanguage, Intl.DateTimeFormat> = {
+  fr: new Intl.DateTimeFormat(localeByLanguage.fr, {
+    day: "numeric",
+    month: "short",
+  }),
+  en: new Intl.DateTimeFormat(localeByLanguage.en, {
+    day: "numeric",
+    month: "short",
+  }),
+};
+
+function getActiveLanguage() {
+  return getStoredLanguagePreference();
+}
+
+export function getActiveCurrencyCode() {
+  return getStoredCurrencyPreference();
+}
 
 export function formatAmount(value: number) {
-  return `${moneyFormatter.format(Number.isFinite(value) ? value : 0)} FCFA`;
+  return `${moneyFormatters[getActiveLanguage()].format(Number.isFinite(value) ? value : 0)} ${getActiveCurrencyCode()}`;
 }
 
 export function formatAmountValue(value: number) {
-  return moneyFormatter.format(Number.isFinite(value) ? value : 0);
+  return moneyFormatters[getActiveLanguage()].format(Number.isFinite(value) ? value : 0);
 }
 
 export function formatOdds(value: number) {
@@ -31,9 +64,9 @@ export function formatPercent(value: number, signed = false) {
 }
 
 export function formatDateTime(value: string) {
-  return dateFormatter.format(new Date(value));
+  return dateFormatters[getActiveLanguage()].format(new Date(value));
 }
 
 export function formatShortDate(value: string) {
-  return shortDateFormatter.format(new Date(value));
+  return shortDateFormatters[getActiveLanguage()].format(new Date(value));
 }

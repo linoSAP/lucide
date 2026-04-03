@@ -8,17 +8,21 @@ const RADAR_PROVIDER_ANTHROPIC = "anthropic";
 const GROQ_RADAR_MODEL = "groq/compound";
 const ANTHROPIC_RADAR_MODEL = "claude-sonnet-4-20250514";
 const THESPORTSDB_BASE_URL = "https://www.thesportsdb.com/api/v1/json/123";
-const MAX_STRUCTURED_RADAR_EVENTS = 6;
-const MAX_COMPACT_STRUCTURED_RADAR_EVENTS = 4;
+const MAX_STRUCTURED_RADAR_EVENTS = 4;
+const MAX_COMPACT_STRUCTURED_RADAR_EVENTS = 3;
+const MAX_ULTRA_COMPACT_STRUCTURED_RADAR_EVENTS = 2;
 const MAX_ANTHROPIC_CONTINUATIONS = 3;
 const MAX_ANTHROPIC_RATE_LIMIT_RETRIES = 1;
 const MAX_ANTHROPIC_RATE_LIMIT_RETRY_MS = 3000;
 const DEFAULT_ANTHROPIC_RATE_LIMIT_RETRY_MS = 1200;
 const MAX_DISCIPLINE_RECENT_RESULTS = 10;
-const MAX_RADAR_HISTORY_SUMMARY_CHARS = 220;
+const MAX_RADAR_HISTORY_SUMMARY_CHARS = 140;
+const MAX_PROVIDER_TRANSIENT_RETRIES = 1;
+const PROVIDER_TRANSIENT_RETRY_DELAY_MS = 900;
 const allowedRadarSports = new Set(["Football", "Basketball", "Tennis"]);
 const allowedRadarRisks = new Set(["prudent", "balanced", "aggressive"]);
 const RADAR_REQUEST_TOO_LARGE_ERROR = "RADAR_REQUEST_TOO_LARGE";
+const RADAR_TRANSIENT_FAILURE_ERROR = "RADAR_TRANSIENT_FAILURE";
 
 const anthropicSystemPrompt = [
   "Tu es un analyste de paris rigoureux et factuel.",
@@ -334,11 +338,57 @@ function isNoUsableSuggestionsError(error) {
 function createRequestTooLargeError() {
   const error = new Error("Radar a du compacter la requete car le contexte etait trop lourd.");
   error.code = RADAR_REQUEST_TOO_LARGE_ERROR;
+  error.statusCode = 413;
   return error;
 }
 
 function isRequestTooLargeError(error) {
   return error instanceof Error && error.code === RADAR_REQUEST_TOO_LARGE_ERROR;
+}
+
+function createTransientRadarError(message = "Radar est occupe pour le moment. Relance dans quelques secondes.") {
+  const error = new Error(message);
+  error.code = RADAR_TRANSIENT_FAILURE_ERROR;
+  error.statusCode = 503;
+  return error;
+}
+
+function isTransientRadarError(error) {
+  return error instanceof Error && error.code === RADAR_TRANSIENT_FAILURE_ERROR;
+}
+
+function isRequestTooLargeMessage(message) {
+  const normalized = normalizeFreeText(message).toLowerCase();
+
+  return (
+    normalized.includes("request entity too large") ||
+    normalized.includes("payload too large") ||
+    normalized.includes("context length") ||
+    normalized.includes("prompt is too long") ||
+    normalized.includes("input too large") ||
+    normalized.includes("message too long") ||
+    normalized.includes("too many tokens")
+  );
+}
+
+function isRetriableProviderStatus(status) {
+  return status === 408 || status === 425 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || status === 529;
+}
+
+function isTransientProviderMessage(message) {
+  const normalized = normalizeFreeText(message).toLowerCase();
+
+  return (
+    normalized.includes("service unavailable") ||
+    normalized.includes("temporarily unavailable") ||
+    normalized.includes("upstream") ||
+    normalized.includes("gateway") ||
+    normalized.includes("overloaded") ||
+    normalized.includes("rate limit") ||
+    normalized.includes("too many requests") ||
+    normalized.includes("timeout") ||
+    normalized.includes("timed out")
+  );
 }
 
 function buildShiftNote(requestedStartDate, requestedEndDate, nextStartDate, nextEndDate) {
@@ -364,7 +414,17 @@ function buildRadarAttempts(requestedStartDate, requestedEndDate) {
   });
 }
 
-function buildCompactInstructionSet() {
+function buildCompactInstructionSet(promptProfile = "compact") {
+  if (promptProfile === "ultra") {
+    return [
+      "0 a 2 suggestions plausibles.",
+      "1 a 2 selections maximum.",
+      "Aucune selection hors fenetre ni avant aujourd'hui.",
+      "Si doute, exclue l'evenement.",
+      "JSON strict uniquement.",
+    ].join(" ");
+  }
+
   return [
     "0 a 3 suggestions plausibles.",
     "1 a 3 selections maximum.",
@@ -752,12 +812,22 @@ async function fetchStructuredRadarEventsForWindow(sport, startDate, endDate, to
   return Array.from(eventsBySignature.values()).slice(0, MAX_STRUCTURED_RADAR_EVENTS);
 }
 
-function buildStructuredEventsPrompt(events, compact = false) {
+function buildStructuredEventsPrompt(events, promptProfile = "full") {
   if (!Array.isArray(events) || !events.length) {
+    if (promptProfile === "ultra") {
+      return "Aucune fixture structuree exploitable. Si un doute subsiste sur les matchs a venir, retourne suggestions: [].";
+    }
+
     return "Aucune fixture structuree exploitable n'a ete trouvee dans la fenetre; tu peux alors t'appuyer sur la recherche web.";
   }
 
-  const limitedEvents = events.slice(0, compact ? MAX_COMPACT_STRUCTURED_RADAR_EVENTS : MAX_STRUCTURED_RADAR_EVENTS);
+  const maxEvents =
+    promptProfile === "ultra"
+      ? MAX_ULTRA_COMPACT_STRUCTURED_RADAR_EVENTS
+      : promptProfile === "compact"
+        ? MAX_COMPACT_STRUCTURED_RADAR_EVENTS
+        : MAX_STRUCTURED_RADAR_EVENTS;
+  const limitedEvents = events.slice(0, maxEvents);
   const summarizedEvents = limitedEvents
     .map((event, index) => `${index + 1}. ${event.event_date} | ${event.competition} | ${event.event}`)
     .join(" ; ");
@@ -779,11 +849,15 @@ function buildRadarUserPrompt({
   searchFocus,
   attempt,
   structuredEventsPrompt,
-  compact = false,
+  promptProfile = "full",
 }) {
-  const contextBlocks = compact
-    ? [historyContext, structuredEventsPrompt]
-    : [historyContext, marketGuide, riskGuide, searchFocus, structuredEventsPrompt];
+  const isCompact = promptProfile !== "full";
+  const isUltraCompact = promptProfile === "ultra";
+  const contextBlocks = isUltraCompact
+    ? [structuredEventsPrompt]
+    : isCompact
+      ? [historyContext, riskGuide, structuredEventsPrompt]
+      : [historyContext, marketGuide, riskGuide, searchFocus, structuredEventsPrompt];
 
   const baseInstructions = [
     `Sport: ${sport}.`,
@@ -804,8 +878,8 @@ function buildRadarUserPrompt({
     "Format JSON strict: {used_window:{start_date,end_date}, shifted:boolean, note:string, suggestions:[{label, legs:[{competition,event,event_date,market,pick}], odds, rationale, caution}]}",
   ];
 
-  if (compact) {
-    return [...baseInstructions, buildCompactInstructionSet()].join(" ");
+  if (isCompact) {
+    return [...baseInstructions, buildCompactInstructionSet(promptProfile)].join(" ");
   }
 
   return [
@@ -884,8 +958,53 @@ function readRequestBody(request, maxBytes = MAX_RADAR_BODY_BYTES) {
   });
 }
 
-function getRadarServiceUnavailableMessage() {
-  return "Radar est temporairement indisponible. Reessaie un peu plus tard.";
+function normalizeRadarResponseErrorMessage(error, fallback = "Analyse Radar indisponible pour le moment.") {
+  const message = error instanceof Error ? normalizeFreeText(error.message) : "";
+  const normalized = message.toLowerCase();
+  const statusCode = getErrorStatusCode(error);
+
+  if (!message) {
+    return fallback;
+  }
+
+  if (statusCode === 401 || statusCode === 403) {
+    return "Session invalide. Reconnecte-toi.";
+  }
+
+  if (
+    statusCode === 413 ||
+    isRequestTooLargeError(error) ||
+    normalized.includes("request entity too large") ||
+    normalized.includes("context length") ||
+    normalized.includes("prompt is too long")
+  ) {
+    return "Radar n'a pas pu finaliser cette analyse cette fois. Relance dans quelques secondes.";
+  }
+
+  if (
+    statusCode === 429 ||
+    isTransientRadarError(error) ||
+    normalized.includes("quota radar temporairement atteint") ||
+    normalized.startsWith("typeerror:") ||
+    normalized.includes("service unavailable") ||
+    normalized.includes("temporarily unavailable") ||
+    normalized.includes("overloaded") ||
+    normalized.includes("gateway") ||
+    normalized.includes("upstream") ||
+    normalized.includes("too many requests")
+  ) {
+    return "Radar est occupe pour le moment. Relance dans quelques secondes.";
+  }
+
+  if (
+    normalized.includes("structured sports schedule request failed") ||
+    normalized.includes("la recherche radar a pris trop de tours") ||
+    normalized.includes("la requête radar a échoué")
+  ) {
+    return fallback;
+  }
+
+  return message;
 }
 
 function resolveRadarProvider({ groqApiKey, anthropicApiKey }) {
@@ -933,54 +1052,84 @@ async function requestGroqRadar(apiKey, payload) {
   let groqResponse = null;
   let groqPayload = null;
 
-  for (let rateLimitRetryIndex = 0; rateLimitRetryIndex <= MAX_ANTHROPIC_RATE_LIMIT_RETRIES; rateLimitRetryIndex += 1) {
-    groqResponse = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey}`,
-        "Groq-Model-Version": "latest",
-      },
-      body: JSON.stringify(payload),
-    });
+  for (
+    let transientRetryIndex = 0;
+    transientRetryIndex <= MAX_PROVIDER_TRANSIENT_RETRIES;
+    transientRetryIndex += 1
+  ) {
+    try {
+      for (let rateLimitRetryIndex = 0; rateLimitRetryIndex <= MAX_ANTHROPIC_RATE_LIMIT_RETRIES; rateLimitRetryIndex += 1) {
+        groqResponse = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${apiKey}`,
+            "Groq-Model-Version": "latest",
+          },
+          body: JSON.stringify(payload),
+        });
 
-    groqPayload = await groqResponse.json().catch(() => null);
+        groqPayload = await groqResponse.json().catch(() => null);
 
-    if (groqResponse.ok) {
-      break;
+        if (groqResponse.ok) {
+          break;
+        }
+
+        const errorMessage =
+          typeof groqPayload?.error?.message === "string"
+            ? groqPayload.error.message
+            : "La requête Radar a échoué.";
+
+        if (groqResponse.status === 413 || isRequestTooLargeMessage(errorMessage)) {
+          throw createRequestTooLargeError();
+        }
+
+        if (groqResponse.status !== 429) {
+          if (isRetriableProviderStatus(groqResponse.status) || isTransientProviderMessage(errorMessage)) {
+            throw createTransientRadarError();
+          }
+
+          throw new Error(errorMessage);
+        }
+
+        const retryAfterSeconds = parseRetryAfterSeconds(groqResponse.headers.get("retry-after"));
+        const retryDelayMs = Math.max(
+          250,
+          retryAfterSeconds !== null ? retryAfterSeconds * 1000 : DEFAULT_ANTHROPIC_RATE_LIMIT_RETRY_MS,
+        );
+
+        if (
+          rateLimitRetryIndex < MAX_ANTHROPIC_RATE_LIMIT_RETRIES &&
+          retryDelayMs <= MAX_ANTHROPIC_RATE_LIMIT_RETRY_MS
+        ) {
+          await wait(retryDelayMs);
+          continue;
+        }
+
+        throw createTransientRadarError();
+      }
+    } catch (error) {
+      if (isRequestTooLargeError(error)) {
+        throw error;
+      }
+
+      if (error instanceof TypeError || isTransientRadarError(error)) {
+        if (transientRetryIndex < MAX_PROVIDER_TRANSIENT_RETRIES) {
+          await wait(PROVIDER_TRANSIENT_RETRY_DELAY_MS);
+          continue;
+        }
+
+        throw createTransientRadarError();
+      }
+
+      throw error;
     }
 
-    if (groqResponse.status === 413) {
-      throw createRequestTooLargeError();
-    }
-
-    if (groqResponse.status !== 429) {
-      const errorMessage =
-        typeof groqPayload?.error?.message === "string"
-          ? groqPayload.error.message
-          : "La requête Radar a échoué.";
-      throw new Error(errorMessage);
-    }
-
-    const retryAfterSeconds = parseRetryAfterSeconds(groqResponse.headers.get("retry-after"));
-    const retryDelayMs = Math.max(
-      250,
-      retryAfterSeconds !== null ? retryAfterSeconds * 1000 : DEFAULT_ANTHROPIC_RATE_LIMIT_RETRY_MS,
-    );
-
-    if (
-      rateLimitRetryIndex < MAX_ANTHROPIC_RATE_LIMIT_RETRIES &&
-      retryDelayMs <= MAX_ANTHROPIC_RATE_LIMIT_RETRY_MS
-    ) {
-      await wait(retryDelayMs);
-      continue;
-    }
-
-    throw new Error(getRadarServiceUnavailableMessage());
+    break;
   }
 
   if (!groqResponse?.ok) {
-    throw new Error("La requête Radar a échoué.");
+    throw createTransientRadarError();
   }
 
   const choice = Array.isArray(groqPayload?.choices) ? groqPayload.choices[0] : null;
@@ -1000,54 +1149,84 @@ async function requestAnthropicRadar(apiKey, payload) {
     let anthropicResponse = null;
     let anthropicPayload = null;
 
-    for (let rateLimitRetryIndex = 0; rateLimitRetryIndex <= MAX_ANTHROPIC_RATE_LIMIT_RETRIES; rateLimitRetryIndex += 1) {
-      anthropicResponse = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "anthropic-version": "2023-06-01",
-          "x-api-key": apiKey,
-        },
-        body: JSON.stringify(requestPayload),
-      });
+    for (
+      let transientRetryIndex = 0;
+      transientRetryIndex <= MAX_PROVIDER_TRANSIENT_RETRIES;
+      transientRetryIndex += 1
+    ) {
+      try {
+        for (let rateLimitRetryIndex = 0; rateLimitRetryIndex <= MAX_ANTHROPIC_RATE_LIMIT_RETRIES; rateLimitRetryIndex += 1) {
+          anthropicResponse = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "anthropic-version": "2023-06-01",
+              "x-api-key": apiKey,
+            },
+            body: JSON.stringify(requestPayload),
+          });
 
-      anthropicPayload = await anthropicResponse.json().catch(() => null);
+          anthropicPayload = await anthropicResponse.json().catch(() => null);
 
-      if (anthropicResponse.ok) {
-        break;
+          if (anthropicResponse.ok) {
+            break;
+          }
+
+          const errorMessage =
+            typeof anthropicPayload?.error?.message === "string"
+              ? anthropicPayload.error.message
+              : "La requête Radar a échoué.";
+
+          if (anthropicResponse.status === 413 || isRequestTooLargeMessage(errorMessage)) {
+            throw createRequestTooLargeError();
+          }
+
+          if (anthropicResponse.status !== 429) {
+            if (isRetriableProviderStatus(anthropicResponse.status) || isTransientProviderMessage(errorMessage)) {
+              throw createTransientRadarError();
+            }
+
+            throw new Error(errorMessage);
+          }
+
+          const retryAfterSeconds = parseRetryAfterSeconds(anthropicResponse.headers.get("retry-after"));
+          const retryDelayMs = Math.max(
+            250,
+            retryAfterSeconds !== null ? retryAfterSeconds * 1000 : DEFAULT_ANTHROPIC_RATE_LIMIT_RETRY_MS,
+          );
+
+          if (
+            rateLimitRetryIndex < MAX_ANTHROPIC_RATE_LIMIT_RETRIES &&
+            retryDelayMs <= MAX_ANTHROPIC_RATE_LIMIT_RETRY_MS
+          ) {
+            await wait(retryDelayMs);
+            continue;
+          }
+
+          throw createTransientRadarError();
+        }
+      } catch (error) {
+        if (isRequestTooLargeError(error)) {
+          throw error;
+        }
+
+        if (error instanceof TypeError || isTransientRadarError(error)) {
+          if (transientRetryIndex < MAX_PROVIDER_TRANSIENT_RETRIES) {
+            await wait(PROVIDER_TRANSIENT_RETRY_DELAY_MS);
+            continue;
+          }
+
+          throw createTransientRadarError();
+        }
+
+        throw error;
       }
 
-      if (anthropicResponse.status !== 429) {
-        const errorMessage =
-          typeof anthropicPayload?.error?.message === "string"
-            ? anthropicPayload.error.message
-            : "La requête Radar a échoué.";
-        throw new Error(errorMessage);
-      }
-
-      const retryAfterSeconds = parseRetryAfterSeconds(anthropicResponse.headers.get("retry-after"));
-      const retryDelayMs = Math.max(
-        250,
-        retryAfterSeconds !== null ? retryAfterSeconds * 1000 : DEFAULT_ANTHROPIC_RATE_LIMIT_RETRY_MS,
-      );
-
-      if (
-        rateLimitRetryIndex < MAX_ANTHROPIC_RATE_LIMIT_RETRIES &&
-        retryDelayMs <= MAX_ANTHROPIC_RATE_LIMIT_RETRY_MS
-      ) {
-        await wait(retryDelayMs);
-        continue;
-      }
-
-      if (retryAfterSeconds !== null && retryAfterSeconds > 0) {
-        throw new Error(`Quota Radar temporairement atteint. Reessaie dans ${retryAfterSeconds} s.`);
-      }
-
-      throw new Error("Quota Radar temporairement atteint. Attends environ 1 minute puis relance.");
+      break;
     }
 
     if (!anthropicResponse?.ok) {
-      throw new Error("La requête Radar a échoué.");
+      throw createTransientRadarError();
     }
 
     if (anthropicPayload?.stop_reason !== "pause_turn" || !Array.isArray(anthropicPayload?.content)) {
@@ -1068,21 +1247,23 @@ async function requestAnthropicRadar(apiKey, payload) {
     };
   }
 
-  throw new Error("La recherche Radar a pris trop de tours.");
+  throw createTransientRadarError();
 }
 
-async function requestRadarProvider(provider, { systemPrompt, userPrompt, maxTokens, temperature }) {
+async function requestRadarProvider(provider, { systemPrompt, userPrompt, maxTokens, temperature, allowWebSearch = false }) {
   if (provider?.name === RADAR_PROVIDER_GROQ) {
     return requestGroqRadar(provider.apiKey, {
       model: GROQ_RADAR_MODEL,
       max_completion_tokens: maxTokens,
       temperature,
       response_format: { type: "json_object" },
-      compound_custom: {
-        tools: {
-          enabled_tools: ["web_search", "visit_website"],
-        },
-      },
+      compound_custom: allowWebSearch
+        ? {
+            tools: {
+              enabled_tools: ["web_search", "visit_website"],
+            },
+          }
+        : undefined,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
@@ -1095,7 +1276,7 @@ async function requestRadarProvider(provider, { systemPrompt, userPrompt, maxTok
     max_tokens: maxTokens,
     temperature,
     system: systemPrompt,
-    tools: anthropicRadarTools,
+    tools: allowWebSearch ? anthropicRadarTools : undefined,
     messages: [
       {
         role: "user",
@@ -1407,9 +1588,7 @@ async function processRadarHttpRequest({
       return { status: 429, payload: { error: "Quota de la semaine atteint. Obtiens des jetons pour continuer.", usage: reservation } };
     }
 
-    const historyContext = historySummary
-      ? `Contexte historique utilisateur: ${historySummary}.`
-      : "Contexte historique utilisateur: aucun historique exploitable pour le moment.";
+    const historyContext = historySummary ? `Historique: ${historySummary}.` : "Historique: faible.";
     const marketGuide = getMarketGuideForSport(sport);
     const riskGuide = getRiskGuideForRadar(risk);
     const searchFocus = getSearchFocusForSport(sport);
@@ -1423,10 +1602,11 @@ async function processRadarHttpRequest({
         attempt.endDate,
         todayIso,
       );
-      const compactVariants = provider?.name === RADAR_PROVIDER_GROQ ? [false, true] : [false];
+      const promptProfiles = ["full", "compact", "ultra"];
+      const allowWebSearch = structuredEvents.length === 0;
 
-      for (const compact of compactVariants) {
-        const structuredEventsPrompt = buildStructuredEventsPrompt(structuredEvents, compact);
+      for (const promptProfile of promptProfiles) {
+        const structuredEventsPrompt = buildStructuredEventsPrompt(structuredEvents, promptProfile);
         const userPrompt = buildRadarUserPrompt({
           sport,
           risk,
@@ -1437,15 +1617,16 @@ async function processRadarHttpRequest({
           searchFocus,
           attempt,
           structuredEventsPrompt,
-          compact,
+          promptProfile,
         });
 
         try {
           const providerPayload = await requestRadarProvider(provider, {
             systemPrompt: anthropicSystemPrompt,
             userPrompt,
-            maxTokens: compact ? 520 : 620,
+            maxTokens: promptProfile === "ultra" ? 380 : promptProfile === "compact" ? 480 : 580,
             temperature: 0.2,
+            allowWebSearch: allowWebSearch && promptProfile !== "ultra",
           });
           const parsedRadarPayload = extractRadarJsonPayload(providerPayload);
           const result = normalizeRadarResult(
@@ -1465,7 +1646,7 @@ async function processRadarHttpRequest({
 
           return { status: 200, payload: result };
         } catch (error) {
-          if (isRequestTooLargeError(error) && compact === false) {
+          if (isRequestTooLargeError(error) && promptProfile !== "ultra") {
             continue;
           }
 
@@ -1475,7 +1656,7 @@ async function processRadarHttpRequest({
           }
 
           if (isRequestTooLargeError(error)) {
-            throw createHttpError(413, "Radar a genere trop de contexte interne pour cette demande. Relance simplement l'analyse.");
+            throw createTransientRadarError("Radar n'a pas pu finaliser cette analyse cette fois. Relance dans quelques secondes.");
           }
 
           throw error;
@@ -1499,7 +1680,7 @@ async function processRadarHttpRequest({
       };
     }
 
-    return { status: 500, payload: { error: "Analyse indisponible pour le moment." } };
+    return { status: 503, payload: { error: "Radar est occupe pour le moment. Relance dans quelques secondes." } };
   } catch (error) {
     if ((reservation?.usageId || reservation?.ledgerId) && authContext?.client) {
       try {
@@ -1509,7 +1690,7 @@ async function processRadarHttpRequest({
       }
     }
 
-    const message = error instanceof Error ? error.message : "Erreur interne sur Radar.";
+    const message = normalizeRadarResponseErrorMessage(error, "Analyse Radar indisponible pour le moment.");
     return { status: getErrorStatusCode(error), payload: { error: message } };
   }
 }

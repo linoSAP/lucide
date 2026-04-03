@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Check, Copy, HeartHandshake, KeyRound, LogOut, MessageCircle, Moon, PencilLine, SunMedium } from "lucide-react";
+import { Banknote, Check, Copy, HeartHandshake, KeyRound, Languages, LogOut, MessageCircle, Moon, PencilLine, SunMedium } from "lucide-react";
 import { PageShell } from "@/components/layout/page-shell";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { getCopy } from "@/lib/copy";
+import { appCurrencies, getCurrencyDisplayName, getCurrencyMeta, getCurrencyOptionLabel, type AppCurrency } from "@/lib/currency";
 import { formatDateTime } from "@/lib/format";
+import { type AppLanguage } from "@/lib/language";
 import {
   RADAR_TOKEN_UNIT_PRICE_FCFA,
   buildRadarPaymentHref,
@@ -20,6 +23,8 @@ import { generateRadarTokenCode, loginRadarAdmin, logoutRadarAdmin, type RadarAd
 import { getStoredThemePreference, setThemePreference, type ThemePreference } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/use-auth-store";
+import { useCurrencyStore } from "@/store/use-currency-store";
+import { useLanguageStore } from "@/store/use-language-store";
 import type { RadarPaymentMethod } from "@/types/supabase";
 
 const supportAmounts = [
@@ -31,21 +36,32 @@ const supportAmounts = [
 
 const themeOptions: Array<{
   value: ThemePreference;
-  label: string;
-  description: string;
   icon: typeof SunMedium;
 }> = [
   {
     value: "light",
-    label: "Clair",
-    description: "Plus net, plus lumineux.",
     icon: SunMedium,
   },
   {
     value: "dark",
-    label: "Sombre",
-    description: "Plus discret, plus dense.",
     icon: Moon,
+  },
+];
+
+const languageOptions: Array<{
+  value: AppLanguage;
+  labelKey: "languageFrenchLabel" | "languageEnglishLabel";
+  descriptionKey: "languageFrenchDescription" | "languageEnglishDescription";
+}> = [
+  {
+    value: "fr",
+    labelKey: "languageFrenchLabel",
+    descriptionKey: "languageFrenchDescription",
+  },
+  {
+    value: "en",
+    labelKey: "languageEnglishLabel",
+    descriptionKey: "languageEnglishDescription",
   },
 ];
 
@@ -107,6 +123,11 @@ export function ProfilePage() {
   const profile = useAuthStore((state) => state.profile);
   const updateProfile = useAuthStore((state) => state.updateProfile);
   const signOut = useAuthStore((state) => state.signOut);
+  const language = useLanguageStore((state) => state.language);
+  const setLanguage = useLanguageStore((state) => state.setLanguage);
+  const currency = useCurrencyStore((state) => state.currency);
+  const setCurrency = useCurrencyStore((state) => state.setCurrency);
+  const copy = getCopy(language);
 
   const [username, setUsername] = useState(profile?.username ?? "");
   const [selectedAmount, setSelectedAmount] = useState<(typeof supportAmounts)[number]["value"]>("500");
@@ -153,12 +174,13 @@ export function ProfilePage() {
   const adminSelectedOffer = useMemo(() => {
     return adminOfferId === "custom" ? null : getRadarCreditOffer(adminOfferId);
   }, [adminOfferId]);
+  const currentCurrency = useMemo(() => getCurrencyMeta(currency), [currency]);
   const supportAmount = resolveSupportAmount(selectedAmount, customAmount);
   const supportAmountValue = Number.parseInt(supportAmount || "0", 10) || 0;
-  const supportAmountLabel = supportAmountValue > 0 ? `${supportAmountValue} FCFA` : "Choisis un montant";
+  const supportAmountLabel = supportAmountValue > 0 ? `${supportAmountValue} FCFA` : copy.profile.chooseAmount;
   const orangeMoneyHref = buildRadarPaymentHref("orange_money", supportAmountValue);
   const mobileMoneyHref = buildRadarPaymentHref("mobile_money", supportAmountValue);
-  const developerWhatsappHref = buildWhatsAppHref(developerWhatsapp, "Bonjour, j'ai une question sur Lucide.");
+  const developerWhatsappHref = buildWhatsAppHref(developerWhatsapp, copy.profile.developerMessage);
   const adminTokenCount = adminSelectedOffer
     ? adminSelectedOffer.tokenCount
     : Math.max(1, Number.parseInt(adminCustomTokenCount || "0", 10) || 0);
@@ -178,6 +200,8 @@ export function ProfilePage() {
     const result = await updateProfile({
       username: username.trim() || null,
       wave_number: profile?.wave_number ?? null,
+      language,
+      currency,
     });
 
     if (result.error) {
@@ -186,7 +210,7 @@ export function ProfilePage() {
       return;
     }
 
-    setMessage("Profil mis a jour.");
+    setMessage(copy.profile.profileUpdated);
     setIsSaving(false);
   }
 
@@ -210,6 +234,18 @@ export function ProfilePage() {
   function handleThemePreferenceChange(nextTheme: ThemePreference) {
     setThemePreferenceState(nextTheme);
     setThemePreference(nextTheme);
+  }
+
+  function handleLanguageChange(nextLanguage: AppLanguage) {
+    setLanguage(nextLanguage);
+    setError(null);
+    setMessage(null);
+  }
+
+  function handleCurrencyChange(nextCurrency: AppCurrency) {
+    setCurrency(nextCurrency);
+    setError(null);
+    setMessage(null);
   }
 
   function clearAdminHoldTimer() {
@@ -329,15 +365,15 @@ export function ProfilePage() {
                 <p className="truncate text-base font-semibold text-foreground">{displayName}</p>
                 <PencilLine className="h-3.5 w-3.5 text-muted-foreground" />
               </div>
-              <p className="mt-1 truncate text-sm text-muted-foreground">{session?.user.email ?? "Aucun email"}</p>
+              <p className="mt-1 truncate text-sm text-muted-foreground">{session?.user.email ?? copy.profile.noEmail}</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                {profile?.created_at ? `Membre depuis ${formatDateTime(profile.created_at)}` : "Profil en cours de creation"}
+                {profile?.created_at ? `${copy.profile.memberSince} ${formatDateTime(profile.created_at)}` : copy.profile.profileCreating}
               </p>
             </div>
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
-            <Input placeholder="Pseudo" value={username} onChange={(event) => setUsername(event.target.value)} />
+            <Input placeholder={copy.profile.usernamePlaceholder} value={username} onChange={(event) => setUsername(event.target.value)} />
             <Input value={session?.user.email ?? ""} readOnly className="bg-secondary/72 text-muted-foreground" />
           </div>
 
@@ -347,7 +383,7 @@ export function ProfilePage() {
               {error ? <p className="text-sm text-negative/90">{error}</p> : null}
             </div>
             <Button type="submit" size="sm" disabled={isSaving}>
-              {isSaving ? "Sauvegarde..." : "Enregistrer"}
+              {isSaving ? copy.profile.saving : copy.profile.save}
             </Button>
           </div>
         </form>
@@ -355,8 +391,8 @@ export function ProfilePage() {
         <div className="surface hairline rounded-[24px] px-4 py-4 shadow-soft">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-lg font-semibold text-foreground">Apparence</p>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">Choisis le theme le plus confortable.</p>
+              <p className="text-lg font-semibold text-foreground">{copy.profile.appearanceTitle}</p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">{copy.profile.appearanceDescription}</p>
             </div>
           </div>
 
@@ -391,24 +427,115 @@ export function ProfilePage() {
                     >
                       <Icon className="h-4 w-4" />
                     </div>
-                    {isActive ? <span className="text-xs font-medium text-primary">Actif</span> : null}
+                    {isActive ? <span className="text-xs font-medium text-primary">{copy.profile.active}</span> : null}
                   </div>
 
-                  <p className="mt-4 text-sm font-semibold text-foreground">{option.label}</p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{option.description}</p>
+                  <p className="mt-4 text-sm font-semibold text-foreground">
+                    {option.value === "light" ? copy.profile.themeLightLabel : copy.profile.themeDarkLabel}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    {option.value === "light" ? copy.profile.themeLightDescription : copy.profile.themeDarkDescription}
+                  </p>
                 </button>
               );
             })}
           </div>
         </div>
 
+        <div className="surface hairline rounded-[24px] px-4 py-4 shadow-soft">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-lg font-semibold text-foreground">{copy.profile.languageTitle}</p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">{copy.profile.languageDescription}</p>
+            </div>
+
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/6 text-foreground">
+              <Languages className="h-4 w-4" />
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {languageOptions.map((option) => {
+              const isActive = option.value === language;
+
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={cn(
+                    "rounded-[22px] border px-4 py-4 text-left transition",
+                    isActive
+                      ? "border-primary/24 bg-primary/10 ring-1 ring-primary/18"
+                      : "border-border/8 bg-card/70 hover:bg-card/86",
+                  )}
+                  onClick={() => handleLanguageChange(option.value)}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div
+                      className={cn(
+                        "flex h-11 w-11 items-center justify-center rounded-2xl",
+                        isActive ? "bg-primary/16 text-primary" : "bg-secondary/92 text-muted-foreground",
+                      )}
+                    >
+                      <Languages className="h-4 w-4" />
+                    </div>
+                    {isActive ? <span className="text-xs font-medium text-primary">{copy.profile.active}</span> : null}
+                  </div>
+
+                  <p className="mt-4 text-sm font-semibold text-foreground">{copy.profile[option.labelKey]}</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.profile[option.descriptionKey]}</p>
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="mt-4 text-xs leading-5 text-muted-foreground">{copy.profile.languageHint}</p>
+        </div>
+
+        <div className="surface hairline rounded-[24px] px-4 py-4 shadow-soft">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-lg font-semibold text-foreground">{copy.profile.currencyTitle}</p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">{copy.profile.currencyDescription}</p>
+            </div>
+
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/6 text-foreground">
+              <Banknote className="h-4 w-4" />
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-[20px] border border-white/6 bg-white/4 px-4 py-4">
+            <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">{copy.profile.currencyActive}</p>
+            <div className="mt-3 flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/8 text-xl">
+                <span aria-hidden="true">{currentCurrency.flag}</span>
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold text-foreground">{currentCurrency.code}</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {getCurrencyDisplayName(currentCurrency.code, language)}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <Select className="mt-4" value={currency} onChange={(event) => handleCurrencyChange(event.target.value as AppCurrency)}>
+            {appCurrencies.map((option) => (
+              <option key={option.code} value={option.code}>
+                {getCurrencyOptionLabel(option.code, language)}
+              </option>
+            ))}
+          </Select>
+
+          <p className="mt-4 text-xs leading-5 text-muted-foreground">{copy.profile.currencyHint}</p>
+        </div>
+
         <div className="rounded-[26px] border border-white/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,176,32,0.08))] px-4 py-4 shadow-soft">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-lg font-semibold text-foreground">Soutenir Lucide</p>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                Tes dons soutiennent le projet, l'hebergement et les futures ameliorations de Radar.
-              </p>
+              <p className="text-lg font-semibold text-foreground">{copy.profile.supportTitle}</p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">{copy.profile.supportDescription}</p>
             </div>
 
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/10 text-primary">
@@ -429,7 +556,7 @@ export function ProfilePage() {
                 )}
                 onClick={() => setSelectedAmount(amount.value)}
               >
-                {amount.label}
+                {amount.value === "libre" ? copy.profile.amountCustom : amount.label}
               </button>
             ))}
           </div>
@@ -438,21 +565,21 @@ export function ProfilePage() {
             <Input
               className="mt-3"
               inputMode="numeric"
-              placeholder="Montant en FCFA"
+              placeholder={copy.profile.amountPlaceholder}
               value={customAmount}
               onChange={(event) => setCustomAmount(sanitizeSupportAmount(event.target.value))}
             />
           ) : null}
 
           <div className="mt-4 rounded-[18px] border border-white/6 bg-white/4 px-4 py-3">
-            <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Montant choisi</p>
+            <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">{copy.profile.selectedAmount}</p>
             <p className="mt-1 text-base font-semibold text-foreground">{supportAmountLabel}</p>
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <div className="rounded-[22px] border border-[#ff8a1e]/24 bg-[linear-gradient(180deg,rgba(255,138,30,0.14),rgba(255,138,30,0.06))] px-4 py-4">
               <p className="text-sm font-semibold text-foreground">Orange Money</p>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">Pour soutenir Lucide avec Orange Money.</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.profile.orangeDescription}</p>
               <div className="mt-3 inline-flex rounded-full bg-black/10 px-3 py-1 text-xs font-medium text-foreground/88">
                 {supportAmountLabel}
               </div>
@@ -462,18 +589,18 @@ export function ProfilePage() {
                   href={orangeMoneyHref}
                   className={cn(buttonVariants({ size: "default" }), "mt-4 flex w-full justify-center rounded-[16px] bg-[#ff7900] text-white hover:bg-[#ff8a1f]")}
                 >
-                  Donner
+                  {copy.profile.donate}
                 </a>
               ) : (
                 <Button className="mt-4 w-full rounded-[16px]" disabled>
-                  Choisir un montant
+                  {copy.profile.chooseAmountCta}
                 </Button>
               )}
             </div>
 
             <div className="rounded-[22px] border border-[#ffd248]/24 bg-[linear-gradient(180deg,rgba(255,210,72,0.16),rgba(255,210,72,0.06))] px-4 py-4">
               <p className="text-sm font-semibold text-foreground">Mobile Money</p>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">Pour soutenir Lucide avec Mobile Money.</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.profile.mobileDescription}</p>
               <div className="mt-3 inline-flex rounded-full bg-black/10 px-3 py-1 text-xs font-medium text-foreground/88">
                 {supportAmountLabel}
               </div>
@@ -483,11 +610,11 @@ export function ProfilePage() {
                   href={mobileMoneyHref}
                   className={cn(buttonVariants({ size: "default" }), "mt-4 flex w-full justify-center rounded-[16px] bg-[#ffd248] text-[#332400] hover:bg-[#ffdc6f]")}
                 >
-                  Donner
+                  {copy.profile.donate}
                 </a>
               ) : (
                 <Button className="mt-4 w-full rounded-[16px]" disabled>
-                  Choisir un montant
+                  {copy.profile.chooseAmountCta}
                 </Button>
               )}
             </div>
@@ -497,7 +624,7 @@ export function ProfilePage() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold text-foreground">Wave</p>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">Si tu soutiens via Wave, copie simplement ce numero.</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.profile.waveDescription}</p>
               </div>
 
               <div className="inline-flex rounded-full bg-black/10 px-3 py-1 text-xs font-medium text-foreground/88">
@@ -514,21 +641,21 @@ export function ProfilePage() {
                 {waveCopyState === "copied" ? (
                   <>
                     <Check className="mr-2 h-4 w-4" />
-                    Numero copie
+                    {copy.profile.numberCopied}
                   </>
                 ) : (
                   <>
                     <Copy className="mr-2 h-4 w-4" />
-                    Copier le numero
+                    {copy.profile.copyNumber}
                   </>
                 )}
               </Button>
             </div>
 
-            {waveCopyState === "error" ? <p className="mt-3 text-xs text-negative/90">Copie impossible pour le moment.</p> : null}
+            {waveCopyState === "error" ? <p className="mt-3 text-xs text-negative/90">{copy.profile.copyFailed}</p> : null}
           </div>
 
-          <p className="mt-3 text-xs leading-5 text-muted-foreground">Choisis ton montant puis touche le service que tu utilises.</p>
+          <p className="mt-3 text-xs leading-5 text-muted-foreground">{copy.profile.supportHint}</p>
         </div>
 
         <div className="flex items-center justify-between gap-3 px-1 pt-1">
@@ -541,7 +668,7 @@ export function ProfilePage() {
             disabled={isSigningOut}
           >
             <LogOut className="h-4 w-4" />
-            {isSigningOut ? "Sortie..." : "Deconnexion"}
+            {isSigningOut ? copy.profile.signingOut : copy.profile.signOut}
           </button>
         </div>
 
@@ -556,7 +683,7 @@ export function ProfilePage() {
             )}
           >
             <MessageCircle className="mr-2 h-4 w-4" />
-            Contacter le developpeur
+            {copy.profile.contactDeveloper}
           </a>
         </div>
       </PageShell>

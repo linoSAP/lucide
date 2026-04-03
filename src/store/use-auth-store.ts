@@ -1,6 +1,8 @@
 import type { Session, User } from "@supabase/supabase-js";
 import { create } from "zustand";
+import { getStoredLanguagePreference } from "@/lib/language";
 import { getSupabaseOrThrow, isSupabaseConfigured, supabase } from "@/lib/supabase";
+import { normalizeErrorMessage } from "@/lib/utils";
 import type { ProfileRow, ProfileUpdate } from "@/types/supabase";
 
 type AuthStatus = "loading" | "ready";
@@ -23,7 +25,7 @@ interface AuthStore {
   refreshProfile: (userId?: string | null) => Promise<void>;
   signInWithPassword: (email: string, password: string) => Promise<AuthMutationResult>;
   signUpWithPassword: (email: string, password: string) => Promise<SignUpResult>;
-  updateProfile: (values: Pick<ProfileUpdate, "username" | "wave_number">) => Promise<AuthMutationResult>;
+  updateProfile: (values: Pick<ProfileUpdate, "username" | "wave_number" | "language" | "currency">) => Promise<AuthMutationResult>;
   signOut: () => Promise<AuthMutationResult>;
 }
 
@@ -31,32 +33,55 @@ let isSubscribedToAuth = false;
 
 function getAuthErrorMessage(message: string) {
   const normalized = message.trim().toLowerCase();
+  const isEnglish = getStoredLanguagePreference() === "en";
 
   if (normalized.includes("invalid login credentials")) {
-    return "Email ou mot de passe incorrect.";
+    return isEnglish ? "Incorrect email or password." : "Email ou mot de passe incorrect.";
   }
 
   if (normalized.includes("email not confirmed")) {
-    return "Confirme ton email avant de te connecter.";
+    return isEnglish ? "Confirm your email before signing in." : "Confirme ton email avant de te connecter.";
   }
 
   if (normalized.includes("user already registered")) {
-    return "Un compte existe deja avec cet email.";
+    return isEnglish ? "An account already exists with this email." : "Un compte existe deja avec cet email.";
   }
 
   if (normalized.includes("email rate limit exceeded")) {
-    return "Trop d'emails envoyes pour le moment. Reessaie plus tard ou desactive la confirmation email dans Supabase.";
+    return isEnglish
+      ? "Too many emails were sent for now. Try again later or disable email confirmation in Supabase."
+      : "Trop d'emails envoyes pour le moment. Reessaie plus tard ou desactive la confirmation email dans Supabase.";
   }
 
   if (normalized.includes("password should be at least")) {
-    return "Le mot de passe doit contenir au moins 6 caracteres.";
+    return isEnglish ? "The password must be at least 6 characters long." : "Le mot de passe doit contenir au moins 6 caracteres.";
   }
 
   if (normalized.includes("signup is disabled")) {
-    return "L'inscription par email est desactivee sur ce projet Supabase.";
+    return isEnglish ? "Email sign-up is disabled on this Supabase project." : "L'inscription par email est desactivee sur ce projet Supabase.";
   }
 
-  return message;
+  return normalizeErrorMessage(
+    message,
+    isEnglish ? "Connection is unavailable right now. Please try again." : "Connexion impossible pour le moment. Reessaie.",
+  );
+}
+
+function isMissingProfileColumnError(message: string, columnName: string) {
+  const normalized = message.toLowerCase();
+  return normalized.includes(columnName) && (normalized.includes("column") || normalized.includes("schema cache"));
+}
+
+function getGenericCopy() {
+  const isEnglish = getStoredLanguagePreference() === "en";
+
+  return {
+    profileLoadError: isEnglish ? "Unable to load the profile." : "Impossible de charger le profil.",
+    supabaseMissing: isEnglish
+      ? "Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY."
+      : "Supabase n'est pas configure. Ajoute VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY.",
+    noActiveSession: isEnglish ? "No active session." : "Aucune session active.",
+  };
 }
 
 async function fetchOrCreateProfile(user: User) {
@@ -117,7 +142,11 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     const { data, error } = await getSupabaseOrThrow().auth.getSession();
 
     if (error) {
-      set({ initialized: true, status: "ready", error: error.message });
+      set({
+        initialized: true,
+        status: "ready",
+        error: normalizeErrorMessage(error.message, getGenericCopy().profileLoadError),
+      });
       return;
     }
 
@@ -136,16 +165,18 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       const profile = await fetchOrCreateProfile(currentUser);
       set({ profile, error: null });
     } catch (error) {
+      const genericCopy = getGenericCopy();
       set({
         profile: null,
-        error: error instanceof Error ? error.message : "Impossible de charger le profil.",
+        error: error instanceof Error ? normalizeErrorMessage(error.message, genericCopy.profileLoadError) : genericCopy.profileLoadError,
       });
     }
   },
   signInWithPassword: async (email, password) => {
     if (!supabase) {
+      const genericCopy = getGenericCopy();
       return {
-        error: "Supabase n'est pas configure. Ajoute VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY.",
+        error: genericCopy.supabaseMissing,
       };
     }
 
@@ -158,8 +189,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   },
   signUpWithPassword: async (email, password) => {
     if (!supabase) {
+      const genericCopy = getGenericCopy();
       return {
-        error: "Supabase n'est pas configure. Ajoute VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY.",
+        error: genericCopy.supabaseMissing,
         requiresEmailConfirmation: false,
       };
     }
@@ -188,24 +220,54 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     const userId = get().session?.user.id;
 
     if (!userId || !supabase) {
-      return { error: "Aucune session active." };
+      return { error: getGenericCopy().noActiveSession };
     }
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("profiles")
       .upsert(
         {
           id: userId,
           username: values.username,
           wave_number: values.wave_number,
+          language: values.language,
+          currency: values.currency,
         },
         { onConflict: "id" },
       )
       .select()
       .single();
 
+    const missingLanguageColumn = Boolean(error && values.language && isMissingProfileColumnError(error.message, "language"));
+    const missingCurrencyColumn = Boolean(error && values.currency && isMissingProfileColumnError(error.message, "currency"));
+
+    if (error && (missingLanguageColumn || missingCurrencyColumn)) {
+      const retryPayload: ProfileUpdate = {
+        id: userId,
+        username: values.username,
+        wave_number: values.wave_number,
+      };
+
+      if (values.language && !missingLanguageColumn) {
+        retryPayload.language = values.language;
+      }
+
+      if (values.currency && !missingCurrencyColumn) {
+        retryPayload.currency = values.currency;
+      }
+
+      const retryResult = await supabase
+        .from("profiles")
+        .upsert(retryPayload, { onConflict: "id" })
+        .select()
+        .single();
+
+      data = retryResult.data;
+      error = retryResult.error;
+    }
+
     if (error) {
-      return { error: error.message };
+      return { error: normalizeErrorMessage(error.message, getGenericCopy().profileLoadError) };
     }
 
     set({ profile: data, error: null });
@@ -220,7 +282,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     const { error } = await supabase.auth.signOut();
 
     if (error) {
-      return { error: error.message };
+      return { error: normalizeErrorMessage(error.message, getGenericCopy().noActiveSession) };
     }
 
     set({ session: null, profile: null, error: null });

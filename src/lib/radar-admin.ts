@@ -1,4 +1,5 @@
 import type { RadarPaymentMethod } from "@/types/supabase";
+import { normalizeErrorMessage } from "@/lib/utils";
 
 export interface RadarAdminCodePayload {
   code: string;
@@ -22,7 +23,7 @@ async function readJsonOrThrow(response: Response) {
 
   if (!response.ok) {
     const message = payload?.error ?? rawText;
-    throw new Error(message || "Operation admin impossible pour le moment.");
+    throw new Error(normalizeErrorMessage(message || rawText, "Operation admin impossible pour le moment."));
   }
 
   return payload;

@@ -9,7 +9,7 @@ import {
   getMostProfitableSport,
   getWorstLosingStreak,
 } from "@/lib/bets";
-import { formatAmount, formatAmountValue, formatPercent, formatShortDate } from "@/lib/format";
+import { formatAmount, formatPercent, formatShortDate } from "@/lib/format";
 import { useBets } from "@/hooks/use-bets";
 import { cn } from "@/lib/utils";
 
@@ -129,8 +129,8 @@ export function DashboardPage() {
   const focusCards: FocusCardProps[] = [
     {
       label: "Mise moyenne",
-      value: formatAmountValue(averageStake),
-      detail: "FCFA par pari sur l'ensemble du journal.",
+      value: formatAmount(averageStake),
+      detail: "Montant moyen engage par pari sur l'ensemble du journal.",
       tone: "positive",
     },
     {
@@ -153,7 +153,7 @@ export function DashboardPage() {
   const kindCards: KindCardProps[] = [
     {
       label: getBetKindLabel("single"),
-      value: formatAmountValue(kindBreakdown.single.net),
+      value: formatAmount(kindBreakdown.single.net),
       detail: `${kindBreakdown.single.count} ticket(s) - ${formatPercent(kindBreakdown.single.winRate)} de reussite`,
       note: `${formatAmount(kindBreakdown.single.totalStake)} engages sur les simples`,
       net: kindBreakdown.single.net,
@@ -162,7 +162,7 @@ export function DashboardPage() {
     },
     {
       label: getBetKindLabel("combo"),
-      value: formatAmountValue(kindBreakdown.combo.net),
+      value: formatAmount(kindBreakdown.combo.net),
       detail: `${kindBreakdown.combo.count} ticket(s) - ${formatPercent(kindBreakdown.combo.winRate)} de reussite`,
       note:
         kindBreakdown.combo.count > 0
@@ -179,12 +179,11 @@ export function DashboardPage() {
       {error ? <p className="px-1 text-sm text-negative/90">{error}</p> : null}
 
       <div className="grid grid-cols-2 gap-3">
-        <MetricTile label="Total mise" value={formatAmountValue(totalStaked)} suffix="FCFA" />
-        <MetricTile label="Total recupere" value={formatAmountValue(totalRecovered)} suffix="FCFA" />
+        <MetricTile label="Total mise" value={formatAmount(totalStaked)} />
+        <MetricTile label="Total recupere" value={formatAmount(totalRecovered)} />
         <MetricTile
           label="Bilan net"
-          value={formatAmountValue(netBalance)}
-          suffix="FCFA"
+          value={formatAmount(netBalance)}
           tone={netBalance > 0 ? "positive" : netBalance < 0 ? "negative" : "neutral"}
         />
         <MetricTile label="Reussite" value={formatPercent(winRate)} tone={winRate > 50 ? "positive" : "neutral"} />

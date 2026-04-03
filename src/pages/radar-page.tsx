@@ -16,7 +16,8 @@ import {
   getMostProfitableSport,
   getWorstLosingStreak,
 } from "@/lib/bets";
-import { formatAmountValue, formatPercent } from "@/lib/format";
+import { formatAmount, formatPercent } from "@/lib/format";
+import { getStoredLanguagePreference, type AppLanguage } from "@/lib/language";
 import { useBets } from "@/hooks/use-bets";
 import {
   RADAR_WEEKLY_LIMIT,
@@ -47,18 +48,37 @@ const radarDateModeOptions: Array<{ value: RadarDateMode; label: string }> = [
 const buyTokensButtonClass =
   "rounded-full border border-[#ffd248]/45 bg-[linear-gradient(135deg,#fff1a8_0%,#ffd248_36%,#ffb020_100%)] text-[#3b2400] shadow-[0_16px_42px_rgba(255,176,32,0.24)] hover:brightness-[1.03] hover:shadow-[0_20px_48px_rgba(255,176,32,0.3)]";
 
-const dateLabelFormatter = new Intl.DateTimeFormat("fr-CM", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
+const radarDateLabelFormatters: Record<AppLanguage, Intl.DateTimeFormat> = {
+  fr: new Intl.DateTimeFormat("fr-CM", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }),
+  en: new Intl.DateTimeFormat("en-CM", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }),
+};
 
-const eventDateLabelFormatter = new Intl.DateTimeFormat("fr-CM", {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
+const radarEventDateLabelFormatters: Record<AppLanguage, Intl.DateTimeFormat> = {
+  fr: new Intl.DateTimeFormat("fr-CM", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }),
+  en: new Intl.DateTimeFormat("en-CM", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }),
+};
+
+function getActiveLanguage() {
+  return getStoredLanguagePreference();
+}
 
 function toDateInputValue(date: Date) {
   const year = date.getFullYear();
@@ -90,14 +110,15 @@ function normalizeRadarWindow(dateMode: RadarDateMode, selectedDate: string, ran
 }
 
 function formatRadarWindowLabel(startDate: string, endDate: string) {
-  const startLabel = dateLabelFormatter.format(new Date(`${startDate}T12:00:00`));
-  const endLabel = dateLabelFormatter.format(new Date(`${endDate}T12:00:00`));
+  const formatter = radarDateLabelFormatters[getActiveLanguage()];
+  const startLabel = formatter.format(new Date(`${startDate}T12:00:00`));
+  const endLabel = formatter.format(new Date(`${endDate}T12:00:00`));
 
   return startDate === endDate ? startLabel : `${startLabel} - ${endLabel}`;
 }
 
 function formatRadarEventDateLabel(eventDate: string) {
-  return eventDateLabelFormatter.format(new Date(`${eventDate}T12:00:00`));
+  return radarEventDateLabelFormatters[getActiveLanguage()].format(new Date(`${eventDate}T12:00:00`));
 }
 
 function parseDecimal(value: string) {
@@ -106,7 +127,7 @@ function parseDecimal(value: string) {
 
 function buildRadarHistorySummary(bets: BetRow[]) {
   if (!bets.length) {
-    return "Aucun historique utilisateur disponible pour le moment.";
+    return "Aucun historique utile.";
   }
 
   const metrics = calculateBetMetrics(bets);
@@ -114,11 +135,12 @@ function buildRadarHistorySummary(bets: BetRow[]) {
   const profitableSport = getMostProfitableSport(bets);
 
   return [
-    `${bets.length} ticket(s)`,
-    `reussite ${formatPercent(metrics.winRate)}`,
-    `net ${formatAmountValue(metrics.net)} FCFA`,
-    `sport rentable ${profitableSport}`,
-    `${kindBreakdown.combo.count} combine(s) / ${kindBreakdown.single.count} simple(s)`,
+    `${bets.length} tickets`,
+    `WR ${formatPercent(metrics.winRate)}`,
+    `net ${formatAmount(metrics.net)}`,
+    `sport fort ${profitableSport}`,
+    `simples ${kindBreakdown.single.count}`,
+    `combines ${kindBreakdown.combo.count}`,
   ].join(". ");
 }
 
@@ -162,15 +184,15 @@ function buildRadarDisciplineInput(bets: BetRow[]) {
       `Paris en cours ${metrics.pendingCount}`,
       `Reussite ${formatPercent(metrics.winRate)}`,
       `ROI ${formatPercent(metrics.roi, true)}`,
-      `Bilan net ${formatAmountValue(metrics.net)} FCFA`,
-      `Mise moyenne ${formatAmountValue(averageStake)} FCFA`,
-      `Exposition ouverte ${formatAmountValue(metrics.openExposure)} FCFA`,
+      `Bilan net ${formatAmount(metrics.net)}`,
+      `Mise moyenne ${formatAmount(averageStake)}`,
+      `Exposition ouverte ${formatAmount(metrics.openExposure)}`,
       `Cote moyenne ${metrics.averageOdds.toFixed(2)}`,
       `Sport le plus joue ${metrics.favoriteSport}`,
       `Sport le plus rentable ${profitableSport}`,
       `Pire serie perdante ${worstLosingStreak}`,
-      `Simples ${kindBreakdown.single.count} tickets, net ${formatAmountValue(kindBreakdown.single.net)} FCFA, reussite ${formatPercent(kindBreakdown.single.winRate)}`,
-      `Combines ${kindBreakdown.combo.count} tickets, net ${formatAmountValue(kindBreakdown.combo.net)} FCFA, reussite ${formatPercent(kindBreakdown.combo.winRate)}, moyenne ${kindBreakdown.combo.averageEventCount.toFixed(1)} evenement(s)`,
+      `Simples ${kindBreakdown.single.count} tickets, net ${formatAmount(kindBreakdown.single.net)}, reussite ${formatPercent(kindBreakdown.single.winRate)}`,
+      `Combines ${kindBreakdown.combo.count} tickets, net ${formatAmount(kindBreakdown.combo.net)}, reussite ${formatPercent(kindBreakdown.combo.winRate)}, moyenne ${kindBreakdown.combo.averageEventCount.toFixed(1)} evenement(s)`,
     ].join(". "),
     recentResults: buildRecentSettledResults(bets),
   };
@@ -542,7 +564,7 @@ export function RadarPage() {
       setSuggestions([]);
       setAnalysisWindowShifted(false);
       setAnalysisWindowNote("");
-      setError(nextError instanceof Error ? nextError.message : "Analyse indisponible pour le moment.");
+      setError(getErrorMessage(nextError, "Analyse indisponible pour le moment."));
     } finally {
       setIsLoading(false);
     }
@@ -774,7 +796,7 @@ export function RadarPage() {
             <MetaPill>{`${bets.length} tickets`}</MetaPill>
             <MetaPill>{`Regles ${disciplineSettledCount}`}</MetaPill>
             <MetaPill>{`Reussite ${formatPercent(disciplineMetrics.winRate)}`}</MetaPill>
-            <MetaPill>{`Bilan ${formatAmountValue(disciplineMetrics.net)} FCFA`}</MetaPill>
+            <MetaPill>{`Bilan ${formatAmount(disciplineMetrics.net)}`}</MetaPill>
           </div>
 
           <p className="mt-4 text-xs leading-5 text-muted-foreground">

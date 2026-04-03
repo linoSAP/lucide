@@ -1,34 +1,26 @@
 import { motion } from "framer-motion";
 import { Outlet, useLocation } from "react-router-dom";
+import { getCopy } from "@/lib/copy";
 import { BottomNav } from "@/components/layout/bottom-nav";
 import { useAuthStore } from "@/store/use-auth-store";
-
-const pageMeta: Record<string, { title: string; subtitle: string }> = {
-  "/journal": {
-    title: "Journal",
-    subtitle: "Saisir ses mises et garder une trace nette.",
-  },
-  "/dashboard": {
-    title: "Tableau de bord",
-    subtitle: "Voir la realite en chiffres, sans bruit.",
-  },
-  "/radar": {
-    title: "Radar",
-    subtitle: "Suggestions cadres par date, sans bruit.",
-  },
-  "/profil": {
-    title: "Profil",
-    subtitle: "Parametres, soutien et informations personnelles.",
-  },
-};
+import { useLanguageStore } from "@/store/use-language-store";
 
 export function AppShell() {
   const location = useLocation();
   const session = useAuthStore((state) => state.session);
+  const language = useLanguageStore((state) => state.language);
+  const copy = getCopy(language);
+
+  const pageMeta: Record<string, { title: string; subtitle: string }> = {
+    "/journal": copy.appShell.pages.journal,
+    "/dashboard": copy.appShell.pages.dashboard,
+    "/radar": copy.appShell.pages.radar,
+    "/profil": copy.appShell.pages.profile,
+  };
 
   const meta = pageMeta[location.pathname] ?? {
-    title: "Lucide",
-    subtitle: "Voir clair sur ses paris.",
+    title: copy.appShell.defaultTitle,
+    subtitle: copy.appShell.defaultSubtitle,
   };
 
   return (
@@ -42,13 +34,13 @@ export function AppShell() {
           className="mb-6 flex items-start justify-between gap-4"
         >
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">Lucide</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">{copy.appShell.brand}</p>
             <h1 className="mt-3 text-3xl font-bold tracking-tight">{meta.title}</h1>
             <p className="mt-2 max-w-xs text-sm leading-6 text-muted-foreground">{meta.subtitle}</p>
           </div>
 
           <div className="rounded-full border border-border/8 bg-card/84 px-3 py-2 text-right text-xs text-muted-foreground shadow-soft">
-            <p className="max-w-[7rem] truncate">{session?.user.email ?? "Session"}</p>
+            <p className="max-w-[7rem] truncate">{session?.user.email ?? copy.appShell.sessionFallback}</p>
           </div>
         </motion.header>
 
